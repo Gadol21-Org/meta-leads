@@ -69,6 +69,8 @@ main { max-width: 720px; margin: 0 auto; padding: 16px; }
 .lead-list { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
 .lead-list li + li { border-top: 1px solid var(--line); }
 .lead-row { display: flex; justify-content: space-between; gap: 12px; padding: 14px 16px; color: inherit; text-decoration: none; }
+/* Long-pressing a link row otherwise opens the browser's link preview/callout menu and selects text. */
+.lead-row { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 .lead-row:active { background: var(--bg); }
 .lead-name { font-weight: 600; overflow-wrap: anywhere; }
 .date { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
