@@ -16,7 +16,7 @@ use crate::{
     assets,
     config::Config,
     meta::{self, Graph, LeadgenEvent, WebhookPayload},
-    push::{BroadcastResult, Payload, Pusher},
+    push::{Payload, Pusher},
     reconcile,
     store::{Lead, LeadSource, Store, Subscription},
 };
@@ -221,7 +221,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         // Everything below is expected to sit behind Cloudflare Access.
         .route("/api/config", get(api_config))
         .route("/api/subscriptions", post(subscribe).delete(unsubscribe))
-        .route("/api/test-notification", post(test_notification))
         .route("/api/leads", get(list_leads))
         .route("/api/leads/:id", get(get_lead))
         .route("/api/sync", post(sync))
@@ -427,17 +426,6 @@ async fn unsubscribe(State(st): State<Arc<AppState>>, Json(b): Json<Subscription
         }
     }
     Json(OkResponse { ok: true }).into_response()
-}
-
-async fn test_notification(State(st): State<Arc<AppState>>) -> Json<BroadcastResult> {
-    let payload = Payload {
-        title: "בדיקת Meta Leads".into(),
-        body: "ההתראות פועלות במכשיר הזה.".into(),
-        url: "/".into(),
-        lead_id: None,
-        tag: "test".into(),
-    };
-    Json(st.pusher.broadcast(&st.store, &payload).await)
 }
 
 async fn list_leads(State(st): State<Arc<AppState>>) -> Json<LeadsResponse> {

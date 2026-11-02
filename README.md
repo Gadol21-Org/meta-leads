@@ -51,7 +51,7 @@ Meta lead form ──webhook (leadgen)──▶ /webhook ──Graph API──�
    app from the home screen, then enable notifications. Apple only allows web
    push for installed web apps.
 
-The ⋯ menu has **Send test notification** and **Turn off notifications on this device**.
+The ⋯ menu has **Turn off notifications on this device**.
 
 Meta is the source of truth and the local file is a cache. **Pull down to refresh** shows the stored leads at once,
 then syncs with Meta (a sync asked for within 30 seconds of the last one reuses its result, so pulling often costs

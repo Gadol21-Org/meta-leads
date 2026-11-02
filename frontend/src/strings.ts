@@ -7,7 +7,6 @@ const plural = (n: number, one: string, many: string): string => (n === 1 ? one 
 
 export const leads = (n: number): string => plural(n, "ליד אחד", "לידים");
 export const forms = (n: number): string => plural(n, "טופס אחד", "טפסים");
-export const devices = (n: number): string => plural(n, "מכשיר אחד", "מכשירים");
 
 export const t = {
   appName: "Meta Leads",
@@ -21,9 +20,8 @@ export const t = {
     notAllowed: "ההתראות לא אושרו.",
     off: "ההתראות כובו במכשיר הזה.",
     notSubscribed: "המכשיר הזה אינו רשום להתראות.",
-    sentTo: (n: number): string => `נשלח אל ${devices(n)}.`,
   },
-  menu: { testPush: "שליחת התראת בדיקה", unsubscribe: "כיבוי התראות במכשיר הזה" },
+  menu: { unsubscribe: "כיבוי התראות במכשיר הזה" },
   list: {
     noToken: "אסימון העמוד של Meta לא הוגדר, ולכן הלידים מוצגים רק עם המזהה שלהם. ראו README.",
     empty: "אין לידים עדיין. לידים חדשים יופיעו כאן וכהתראות.",

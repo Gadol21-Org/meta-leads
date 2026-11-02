@@ -111,7 +111,7 @@ token generated with the same permissions.
 
 * Test now, in Development mode: [Lead Ads Testing Tool](https://developers.facebook.com/tools/lead-ads-testing),
   pick the Page and form, **Create lead**. It should appear in the app and as a notification
-  within seconds. (You can also use the app's ⋯ menu > **Send test notification** to check push alone.)
+  within seconds.
 * **Real leads need the app in Live mode.** In Development mode Meta only sends webhooks for leads
   created by people with a role on the app (the testing tool, or you). Switch **App mode** to
   **Live** (top bar of the app dashboard; needs the privacy policy URL from step 2).
@@ -157,5 +157,4 @@ now records every step, so you can tell them apart.
    `leads_retrieval` permission is wrong (the error text is in the log and on the lead page).
 7. **Did the phone get the notification?** The log says `lead <id> not notified: no device has enabled
    notifications yet` if no phone subscribed (open the app on the phone and tap **Enable notifications**; on
-   iPhone add it to the Home Screen first) or `VAPID keys are not configured`. ⋯ > **Send test notification**
-   checks push on its own.
+   iPhone add it to the Home Screen first) or `VAPID keys are not configured`.
