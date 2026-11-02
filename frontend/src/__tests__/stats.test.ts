@@ -53,11 +53,11 @@ describe("computeStats", () => {
     ]);
     expect(s.byAd.map((b) => [b.label, b.count])).toEqual([
       ["Ad 1", 2],
-      ["Unknown", 2],
+      ["לא ידוע", 2],
       ["Ad 2", 1],
     ]);
     expect(s.byAd[0]?.share).toBeCloseTo(0.4);
-    expect(s.byCampaign[0]).toMatchObject({ label: "Unknown", count: 3 });
+    expect(s.byCampaign[0]).toMatchObject({ label: "לא ידוע", count: 3 });
     expect(s.paid).toBe(2);
     expect(s.organic).toBe(1);
   });
@@ -69,7 +69,7 @@ describe("computeStats", () => {
     const many = Array.from({ length: 12 }, (_, i) => lead(`x${i}`, at(10, 15), { ad: `Ad ${i}` }));
     const grouped = computeStats(many, 7, NOW).byAd;
     expect(grouped).toHaveLength(9);
-    expect(grouped[8]).toMatchObject({ label: "Other (4)", count: 4 });
+    expect(grouped[8]).toMatchObject({ label: "אחר (4)", count: 4 });
   });
 
   it("handles no leads at all", () => {

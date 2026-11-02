@@ -431,7 +431,7 @@ async fn broadcast_reaches_every_device_and_prunes_expired_ones() {
         .broadcast(
             &store,
             &Payload {
-                title: "New lead: Dana".into(),
+                title: "ליד חדש: Dana".into(),
                 body: "b".into(),
                 url: "/leads/1".into(),
                 lead_id: Some("1".into()),

@@ -128,14 +128,13 @@ body.gliding main[data-pull], body.gliding .ptr { transition: transform .3s cubi
 .badge.facebook { background: #1565c0; }
 
 /* Stats */
-.ranges { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 12px; direction: ltr; }
+.ranges { display: flex; justify-content: flex-start; gap: 8px; margin-bottom: 12px; }
 .ranges .chip.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
 .tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
 .tile-label { color: var(--muted); font-size: 13px; }
 .tile-value { font-size: 26px; font-weight: 700; line-height: 1.2; }
 .tile-note { color: var(--muted); font-size: 12px; }
-.en { direction: ltr; text-align: right; }
 .readout { margin: 0 0 8px; min-height: 1.4em; color: var(--muted); font-size: 14px; }
 .chart { direction: ltr; width: 100%; height: auto; display: block; touch-action: pan-y; }
 .chart .bar { fill: var(--brand); }

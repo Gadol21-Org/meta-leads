@@ -1,7 +1,7 @@
 // Service worker: shows push notifications, opens the lead page on tap,
 // and caches the app shell so the PWA opens instantly (and offline).
 
-const CACHE = 'meta-leads-v3';
+const CACHE = 'meta-leads-v4';
 const SHELL = ['/', '/manifest.webmanifest', '/icons/logo-192.png'];
 
 self.addEventListener('install', (event) => {
@@ -42,9 +42,9 @@ self.addEventListener('push', (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch {
-    data = { title: 'New lead', body: event.data?.text() };
+    data = { title: 'ליד חדש', body: event.data?.text() };
   }
-  const title = data.title || 'New lead';
+  const title = data.title || 'ליד חדש';
   event.waitUntil(
     Promise.all([
       self.registration.showNotification(title, {

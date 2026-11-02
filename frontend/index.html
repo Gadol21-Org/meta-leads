@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -16,18 +16,18 @@
   <header class="bar">
     <a href="/" class="brand" data-link>Meta Leads</a>
     <div class="bar-actions">
-      <a href="/stats" data-link class="chip">Stats</a>
-      <button id="notify-btn" class="chip" hidden>Enable notifications</button>
-      <button id="menu-btn" class="icon-btn" aria-label="Menu" hidden>⋯</button>
+      <a href="/stats" data-link class="chip">סטטיסטיקה</a>
+      <button id="notify-btn" class="chip" hidden>הפעלת התראות</button>
+      <button id="menu-btn" class="icon-btn" aria-label="תפריט" hidden>⋯</button>
     </div>
   </header>
 
   <div id="menu" class="menu" hidden>
-    <button data-action="test-push">Send test notification</button>
-    <button data-action="unsubscribe">Turn off notifications on this device</button>
+    <button data-action="test-push">שליחת התראת בדיקה</button>
+    <button data-action="unsubscribe">כיבוי התראות במכשיר הזה</button>
   </div>
 
-  <main id="view" dir="rtl" aria-live="polite"></main>
+  <main id="view" aria-live="polite"></main>
 
   <div id="toast" class="toast" role="status" hidden></div>
 </body>

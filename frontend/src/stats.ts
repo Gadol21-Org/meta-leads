@@ -1,4 +1,5 @@
 import { platformInfo } from "./format";
+import { t } from "./strings";
 import type { LeadSummary } from "./types";
 
 export const RANGES = [7, 30, 90] as const;
@@ -59,20 +60,19 @@ function addDays(from: Date, days: number): Date {
   return new Date(from.getFullYear(), from.getMonth(), from.getDate() + days);
 }
 
-const UNKNOWN = "Unknown";
 const TOP = 8;
 
 /** The largest groups, with the rest folded into "Other"; `label` maps a lead to its group (or undefined). */
 function group(leads: LeadSummary[], label: (l: LeadSummary) => string | undefined, total: number): Bucket[] {
   const counts = new Map<string, number>();
   for (const l of leads) {
-    const key = label(l)?.trim() || UNKNOWN;
+    const key = label(l)?.trim() || t.stats.unknown;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   const shown = sorted.slice(0, TOP);
   const rest = sorted.slice(TOP).reduce((sum, [, n]) => sum + n, 0);
-  if (rest > 0) shown.push([`Other (${sorted.length - TOP})`, rest]);
+  if (rest > 0) shown.push([t.stats.other(sorted.length - TOP), rest]);
   return shown.map(([name, count]) => ({ label: name, count, share: total ? count / total : 0 }));
 }
 

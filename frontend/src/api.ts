@@ -1,3 +1,4 @@
+import { t } from "./strings";
 import type { AppConfig, ImportReport, Lead, LeadSummary } from "./types";
 
 export class ApiError extends Error {
@@ -15,13 +16,13 @@ async function request<T>(path: string, init: { method?: string; body?: unknown 
   });
   // Cloudflare Access answers with a redirect or 401/403 once its session expires.
   if (res.status === 401 || res.status === 403 || res.redirected) {
-    throw new ApiError("Session expired. Reload the page to sign in again.", res.status || 401);
+    throw new ApiError(t.api.sessionExpired, res.status || 401);
   }
   const json = (await res.json().catch(() => ({}))) as { error?: string } & T;
   if (!res.ok) {
     // Our own errors carry Meta's message. Anything else came from a proxy (restart, timeout, crash).
     throw new ApiError(
-      json.error ?? `The server did not answer properly (HTTP ${res.status}). It may be restarting or the request timed out; check the container logs.`,
+      json.error ?? t.api.badResponse(res.status),
       res.status,
     );
   }
