@@ -27,6 +27,11 @@ function toast(msg: string, ms = 3000): void {
   toastTimer = window.setTimeout(() => (t.hidden = true), ms);
 }
 
+// iOS Safari ignores user-scalable=no, so cancel its pinch gesture events too.
+for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
+  document.addEventListener(type, (e) => e.preventDefault());
+}
+
 // ---------- routing ----------
 
 function navigate(url: string): void {

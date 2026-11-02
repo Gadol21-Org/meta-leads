@@ -27,6 +27,8 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; }
+/* Scrolling and taps only: no pinch or double-tap zoom, so it feels like an app. */
+html { touch-action: manipulation; }
 body {
   font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
