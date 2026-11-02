@@ -153,6 +153,17 @@ impl AppState {
             lead_id: Some(lead.id.clone()),
             tag: format!("lead-{}", lead.id),
         };
+        if !self.pusher.enabled() {
+            tracing::warn!(
+                "lead {} not notified: VAPID keys are not configured",
+                lead.id
+            );
+        } else if self.store.list_subscriptions().await.is_empty() {
+            tracing::warn!(
+                "lead {} not notified: no device has enabled notifications yet",
+                lead.id
+            );
+        }
         let r = self.pusher.broadcast(&self.store, &payload).await;
         tracing::info!(
             "lead {} notified: {} sent, {} failed",
@@ -165,14 +176,30 @@ impl AppState {
     async fn process_event(&self, ev: LeadgenEvent) {
         let id = ev.leadgen_id.clone();
         if !self.config.page_id.is_empty() && ev.page_id != self.config.page_id {
+            tracing::warn!(
+                "lead {id} ignored: it is for Page {} but META_PAGE_ID is {}",
+                ev.page_id,
+                self.config.page_id
+            );
             return;
         }
         // Meta retries and can deliver the same lead twice; notify only once.
         if self.store.has_lead(&id).await || !self.in_flight.lock().await.insert(id.clone()) {
+            tracing::info!("lead {id} ignored: already received");
             return;
         }
         match self.ingest(&ev, LeadSource::Webhook).await {
-            Ok((lead, true)) => self.notify_new_lead(&lead).await,
+            Ok((lead, true)) => {
+                tracing::info!(
+                    "lead {id} stored ({}){}",
+                    lead.title,
+                    match &lead.fetch_error {
+                        Some(e) => format!(", but its details could not be read: {e}"),
+                        None => String::new(),
+                    }
+                );
+                self.notify_new_lead(&lead).await;
+            }
             Ok(_) => {}
             Err(e) => tracing::error!("failed to process lead {id}: {e}"),
         }
@@ -264,13 +291,24 @@ struct VerifyQuery {
 
 async fn webhook_verify(State(st): State<Arc<AppState>>, Query(q): Query<VerifyQuery>) -> Response {
     let expected = &st.config.verify_token;
-    let ok = q.mode.as_deref() == Some("subscribe")
-        && !expected.is_empty()
-        && q.verify_token.as_ref() == Some(expected);
-    if ok {
-        q.challenge.unwrap_or_default().into_response()
+    let failure = if q.mode.as_deref() != Some("subscribe") {
+        Some("hub.mode is not \"subscribe\"")
+    } else if expected.is_empty() {
+        Some("META_VERIFY_TOKEN is not configured on the server")
+    } else if q.verify_token.as_ref() != Some(expected) {
+        Some("the verify token does not match META_VERIFY_TOKEN")
     } else {
-        StatusCode::FORBIDDEN.into_response()
+        None
+    };
+    match failure {
+        None => {
+            tracing::info!("webhook verification handshake accepted");
+            q.challenge.unwrap_or_default().into_response()
+        }
+        Some(reason) => {
+            tracing::warn!("webhook verification handshake rejected: {reason}");
+            StatusCode::FORBIDDEN.into_response()
+        }
     }
 }
 
@@ -282,14 +320,41 @@ async fn webhook_receive(
     let sig = headers
         .get("x-hub-signature-256")
         .and_then(|v| v.to_str().ok());
+    tracing::info!(
+        "webhook POST received: {} bytes, signature header {}",
+        body.len(),
+        if sig.is_some() { "present" } else { "missing" }
+    );
     if !meta::verify_signature(&body, sig, &st.config.app_secret) {
+        tracing::warn!(
+            "webhook POST rejected: the signature does not match META_APP_SECRET (secret configured: {}, header present: {}); check that the secret is this app's secret",
+            !st.config.app_secret.is_empty(),
+            sig.is_some()
+        );
         return StatusCode::UNAUTHORIZED;
     }
     let Ok(payload) = serde_json::from_slice::<WebhookPayload>(&body) else {
+        tracing::warn!("webhook POST rejected: the body is not a valid webhook payload");
         return StatusCode::BAD_REQUEST;
     };
-    // Meta wants a fast 200 and retries otherwise: process after responding.
     let events = payload.leadgen_events();
+    if events.is_empty() {
+        tracing::warn!(
+            "webhook POST accepted but it holds no leadgen events (object: {}); is the leadgen field switched on?",
+            payload.object
+        );
+    } else {
+        tracing::info!(
+            "webhook POST accepted: {} leadgen event(s): {}",
+            events.len(),
+            events
+                .iter()
+                .map(|e| format!("lead {} on Page {}", e.leadgen_id, e.page_id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    // Meta wants a fast 200 and retries otherwise: process after responding.
     tokio::spawn(async move {
         for ev in events {
             st.process_event(ev).await;

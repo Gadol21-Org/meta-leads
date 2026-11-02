@@ -13,11 +13,23 @@ Do the steps in this order. The Meta webhook can only be saved once the app is d
 
 ## 2. Meta app and `META_APP_SECRET`
 
-1. Go to [developers.facebook.com/apps](https://developers.facebook.com/apps) > **Create app**.
-   Choose the use case **Other** and the app type **Business**, and attach your Business portfolio
-   (the one that owns the Facebook Page).
-2. **App settings > Basic**: copy **App secret** (click Show) into `META_APP_SECRET`.
+1. Go to [developers.facebook.com/apps](https://developers.facebook.com/apps) > **Create app**, attach the
+   Business portfolio that owns the Facebook Page, and pick the use case **Capture & manage ad leads with
+   Marketing API** (the name may differ slightly; it is the lead-ads one). Do **not** stop at the generic
+   **Other** use case: the lead permissions below are only available through a lead-ads use case, and
+   without them the Lead Ads Testing Tool says "required permissions are missing on the app".
+2. **Add the permissions to the app.** App dashboard > **Use cases** > the lead-ads use case >
+   **Customize** (or **Permissions and features**) and click **Add** next to each of:
+   `leads_retrieval`, `pages_manage_ads`, `pages_read_engagement`, `pages_show_list` and
+   `pages_manage_metadata`. While the app is in Development mode and you are an admin, developer or tester
+   of the app, these work without App Review ("Standard access").
+3. **App settings > Basic**: copy **App secret** (click Show) into `META_APP_SECRET`.
    Also fill in a **Privacy Policy URL**; Meta requires one before the app can go Live (step 6).
+
+**See which permissions the app has right now:** App dashboard > **App Review > Permissions and features**
+lists every permission with its access level (a permission that is not listed or says it must be added is
+missing). For a token, open `https://graph.facebook.com/v21.0/me/permissions?access_token=<TOKEN>` or paste it
+into the [Access Token Debugger](https://developers.facebook.com/tools/debug/accesstoken/) and read `scopes`.
 
 ## 3. GitHub settings and first deploy
 
@@ -116,3 +128,34 @@ token generated with the same permissions.
 
 Open `https://<your-host>`, pass the Cloudflare Access login, tap **Enable notifications**.
 On iPhone, first Share > **Add to Home Screen**, then open the app from the home screen.
+
+## Troubleshooting: a test lead did not arrive
+
+Work through these in order; the first one that fails is the cause. The server log (`docker logs meta-leads`)
+now records every step, so you can tell them apart.
+
+1. **The Lead Ads Testing Tool says "required permissions are missing on the app".** The app lacks lead
+   permissions; see step 2 of section 2 and add them to the app's lead-ads use case. Also check that you are
+   logged in to Facebook as an **admin of the Page** and have a **role on the app** (App roles).
+2. **Is the webhook saved in Meta?** App dashboard > **Webhooks** > **Page**: callback URL and verify token are
+   shown, and the `leadgen` row has **Subscribe** switched on. The log has
+   `webhook verification handshake accepted` from when you saved it.
+3. **Is the Page subscribed?** The startup log says `Page <id>: subscribed to leadgen webhooks`.
+4. **Does Meta reach the server?** In the dashboard Webhooks > Page > `leadgen` row click **Test** (sends a
+   sample event). The log must show `webhook POST received`.
+   * Nothing logged: the request never arrived. Check the Cloudflare Access bypass for `/webhook` (it must
+     cover **POST**, not just GET) and Cloudflare **Security > Events** / Zero Trust **Logs > Access** for blocks
+     (bot protection or WAF rules can block Meta's servers).
+   * `webhook POST rejected: the signature does not match META_APP_SECRET`: the secret in `LEADS_ENV` is wrong
+     (use App settings > Basic > App secret of **this** app; no quotes or spaces) or the deploy did not pick it up.
+5. **Is the app in Development mode?** In Development mode Meta delivers webhooks only for leads created by
+   people with a role on the app. A test lead from the Testing Tool by an admin works; real leads from the
+   public need the app set to **Live** (section 6).
+6. **Did the app store the lead?** Log lines: `webhook POST accepted: 1 leadgen event(s)` then
+   `lead <id> stored (...)`. `lead <id> ignored: it is for Page ...` means `META_PAGE_ID` differs from the
+   Page the lead came from. A stored lead with "details could not be read" means the page token or its
+   `leads_retrieval` permission is wrong (the error text is in the log and on the lead page).
+7. **Did the phone get the notification?** The log says `lead <id> not notified: no device has enabled
+   notifications yet` if no phone subscribed (open the app on the phone and tap **Enable notifications**; on
+   iPhone add it to the Home Screen first) or `VAPID keys are not configured`. ⋯ > **Send test notification**
+   checks push on its own.
