@@ -42,6 +42,10 @@ document.addEventListener("click", (e) => {
     navigate(a.pathname + a.search);
   }
 });
+// A long press on a lead row opens the browser's link menu (Android); the rows are tap targets only.
+document.addEventListener("contextmenu", (e) => {
+  if (e.target instanceof Element && e.target.closest(".lead-row")) e.preventDefault();
+});
 window.addEventListener("popstate", () => void route());
 
 /** Shows the current page. `quiet` (a pull to refresh or a resume) keeps what is on screen
