@@ -17,6 +17,7 @@ use crate::{
     config::Config,
     meta::{self, Graph, LeadgenEvent, WebhookPayload},
     push::{BroadcastResult, Payload, Pusher},
+    reconcile,
     store::{Lead, LeadSource, Store, Subscription},
 };
 
@@ -272,11 +273,6 @@ struct OkResponse {
     ok: bool,
 }
 
-#[derive(Serialize)]
-struct SyncResponse {
-    added: usize,
-}
-
 // ---------- Meta webhook ----------
 
 #[derive(Deserialize)]
@@ -481,7 +477,7 @@ async fn get_lead(
     Json(LeadResponse { lead }).into_response()
 }
 
-/// Read-only import of existing leads from all of the page's forms (no
+/// Import of existing leads from all of the page's forms, reconciled with Meta (no
 /// notifications). Nothing is written to Meta.
 async fn sync(State(st): State<Arc<AppState>>) -> Response {
     if !st.graph.configured() || st.config.page_id.is_empty() {
@@ -495,30 +491,14 @@ async fn sync(State(st): State<Arc<AppState>>) -> Response {
         "import: reading forms and leads for Page {}",
         st.config.page_id
     );
-    let all = match st.graph.all_leads(&st.config.page_id, 200).await {
-        Ok(v) => v,
+    match reconcile::import(&st.graph, &st.store, &st.config.page_id, Utc::now()).await {
+        Ok(report) => {
+            tracing::info!("import: {report:?} in {:?}", started.elapsed());
+            Json(report).into_response()
+        }
         Err(e) => {
             tracing::warn!("import failed after {:?}: {e}", started.elapsed());
-            return fail(StatusCode::BAD_GATEWAY, e.to_string());
+            fail(StatusCode::BAD_GATEWAY, e.to_string())
         }
-    };
-    tracing::info!(
-        "import: Meta returned {} leads in {:?}",
-        all.len(),
-        started.elapsed()
-    );
-    let mut added = 0;
-    for (graph_lead, form_name) in all {
-        if st.store.has_lead(&graph_lead.id).await {
-            continue;
-        }
-        let mut lead = graph_lead.into_lead(LeadSource::Sync, Utc::now());
-        lead.page_id = Some(st.config.page_id.clone());
-        lead.form_name = form_name;
-        if let Err(e) = st.store.save_lead(lead).await {
-            return server_error(e);
-        }
-        added += 1;
     }
-    Json(SyncResponse { added }).into_response()
 }

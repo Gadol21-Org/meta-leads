@@ -241,7 +241,33 @@ struct GraphErrorEnvelope {
 struct GraphErrorBody {
     message: Option<String>,
     code: Option<i64>,
+    error_subcode: Option<i64>,
 }
+
+/// A failed Graph API call, with Meta's codes kept so callers can tell "gone" from "failed".
+#[derive(Debug)]
+pub struct GraphError {
+    message: String,
+    code: Option<i64>,
+    subcode: Option<i64>,
+    pub rate_limited: bool,
+}
+
+impl GraphError {
+    /// Meta's answer for an id that does not exist (or is no longer readable with this token):
+    /// code 100, subcode 33.
+    fn is_object_missing(&self) -> bool {
+        self.code == Some(100) && self.subcode == Some(33)
+    }
+}
+
+impl fmt::Display for GraphError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for GraphError {}
 
 /// Meta error codes that mean "slow down": app (4), user (17), page/feature (32, 613)
 /// and Business Use Case (80000 to 80014) call limits.
@@ -438,11 +464,10 @@ impl Graph {
             let error = serde_json::from_slice::<GraphErrorEnvelope>(&body)
                 .ok()
                 .map(|e| e.error);
+            let code = error.as_ref().and_then(|e| e.code);
+            let subcode = error.as_ref().and_then(|e| e.error_subcode);
             let rate_limited = status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                || error
-                    .as_ref()
-                    .and_then(|e| e.code)
-                    .is_some_and(is_rate_limit_code);
+                || code.is_some_and(is_rate_limit_code);
             let msg = error
                 .and_then(|e| e.message)
                 .unwrap_or_else(|| format!("HTTP {status}"));
@@ -458,10 +483,18 @@ impl Graph {
                 attempt += 1;
                 continue;
             }
-            if rate_limited {
-                anyhow::bail!("Graph API rate limit reached, try again later: {msg}");
+            let message = if rate_limited {
+                format!("Graph API rate limit reached, try again later: {msg}")
+            } else {
+                format!("Graph API: {msg}")
+            };
+            return Err(GraphError {
+                message,
+                code,
+                subcode,
+                rate_limited,
             }
-            anyhow::bail!("Graph API: {msg}");
+            .into());
         }
     }
 
@@ -493,52 +526,123 @@ impl Graph {
             .name
     }
 
-    /// Every page of a paginated list, following `paging.next` (which already carries the token).
+    /// Pages of a paginated list, following `paging.next` (which already carries the token), up to
+    /// `limit` items. The flag says whether the list was read to its end, which matters because
+    /// a lead missing from a truncated list proves nothing.
     async fn collect_pages<T: serde::de::DeserializeOwned>(
         &self,
         first: Page<T>,
         limit: usize,
-    ) -> anyhow::Result<Vec<T>> {
+    ) -> anyhow::Result<(Vec<T>, bool)> {
         let mut items = Vec::new();
         let mut page = first;
-        loop {
+        let complete = loop {
             let next = page.next_url().map(str::to_string);
             items.extend(page.data);
             match next {
-                Some(url) if items.len() < limit => page = self.send(self.http.get(url)).await?,
-                _ => break,
+                None => break items.len() <= limit,
+                Some(_) if items.len() >= limit => break false,
+                Some(url) => page = self.send(self.http.get(url)).await?,
             }
-        }
+        };
         items.truncate(limit);
-        Ok(items)
+        Ok((items, complete))
     }
 
-    /// Backfill: up to `max_per_form` leads from every form on the page, newest first per form.
+    /// Backfill and reconciliation source: up to `max_per_form` leads from every form on the page.
+    /// A form that fails is reported as such (never as "has no leads"); a rate limit aborts
+    /// the whole import, since the remaining calls would fail too.
     pub async fn all_leads(
         &self,
         page_id: &str,
         max_per_form: usize,
-    ) -> anyhow::Result<Vec<(GraphLead, Option<String>)>> {
+    ) -> anyhow::Result<Vec<FormFetch>> {
         let forms: Page<GraphForm> = self
             .get(
                 &format!("{page_id}/leadgen_forms"),
                 &[("fields", "id,name"), ("limit", "100")],
             )
             .await?;
+        let (forms, _) = self.collect_pages(forms, 1000).await?;
         let mut out = Vec::new();
-        for form in self.collect_pages(forms, 1000).await? {
-            let first: Page<GraphLead> = self
-                .get(
-                    &format!("{}/leads", form.id),
-                    &[("fields", LEAD_FIELDS), ("limit", "100")],
-                )
-                .await?;
-            for lead in self.collect_pages(first, max_per_form).await? {
-                out.push((lead, form.name.clone()));
+        for form in forms {
+            match self.form_leads(&form, max_per_form).await {
+                Ok((leads, complete)) => out.push(FormFetch::Read(FormLeads {
+                    form_id: form.id,
+                    form_name: form.name,
+                    leads,
+                    complete,
+                })),
+                Err(e)
+                    if e.downcast_ref::<GraphError>()
+                        .is_some_and(|g| g.rate_limited) =>
+                {
+                    return Err(e)
+                }
+                Err(e) => {
+                    tracing::warn!("import: form {} failed: {e}", form.id);
+                    out.push(FormFetch::Failed {
+                        form_id: form.id,
+                        error: e.to_string(),
+                    });
+                }
             }
         }
         Ok(out)
     }
+
+    async fn form_leads(
+        &self,
+        form: &GraphForm,
+        max: usize,
+    ) -> anyhow::Result<(Vec<GraphLead>, bool)> {
+        let first: Page<GraphLead> = self
+            .get(
+                &format!("{}/leads", form.id),
+                &[("fields", LEAD_FIELDS), ("limit", "100")],
+            )
+            .await?;
+        self.collect_pages(first, max).await
+    }
+
+    /// Asks Meta about one lead by id, to confirm it is really gone before it is removed locally.
+    pub async fn lookup_lead(&self, id: &str) -> LeadLookup {
+        match self.fetch_lead(id).await {
+            Ok(lead) => LeadLookup::Found(Box::new(lead)),
+            Err(e)
+                if e.downcast_ref::<GraphError>()
+                    .is_some_and(GraphError::is_object_missing) =>
+            {
+                LeadLookup::Gone
+            }
+            Err(e) => {
+                tracing::warn!("import: could not verify lead {id}: {e}");
+                LeadLookup::Unknown
+            }
+        }
+    }
+}
+
+/// What reading one form's leads gave.
+pub enum FormFetch {
+    Read(FormLeads),
+    Failed { form_id: String, error: String },
+}
+
+pub struct FormLeads {
+    pub form_id: String,
+    pub form_name: Option<String>,
+    pub leads: Vec<GraphLead>,
+    /// False when the list was cut at the cap: absent leads are then not evidence of deletion.
+    pub complete: bool,
+}
+
+pub enum LeadLookup {
+    Found(Box<GraphLead>),
+    /// Meta says the lead does not exist (any more).
+    Gone,
+    /// The check failed for another reason (network, permissions, rate limit): keep the lead.
+    Unknown,
 }
 
 #[cfg(test)]

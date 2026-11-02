@@ -2,7 +2,7 @@ import "./style.css";
 import * as api from "./api";
 import * as push from "./push";
 import { leadView, listView } from "./views";
-import { esc } from "./format";
+import { esc, importSummary } from "./format";
 import { isWorkerMessage, type AppConfig } from "./types";
 
 function $<T extends HTMLElement>(sel: string): T {
@@ -97,8 +97,7 @@ menu.addEventListener("click", async (e) => {
   try {
     if (action === "sync") {
       toast("Importing leads from Meta…", 10000);
-      const { added } = await api.syncLeads();
-      toast(`Imported ${added} lead${added === 1 ? "" : "s"}.`);
+      toast(importSummary(await api.syncLeads()), 8000);
       await route();
     } else if (action === "test-push") {
       const { sent } = await api.sendTestPush();

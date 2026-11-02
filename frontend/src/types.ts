@@ -50,3 +50,12 @@ export function isWorkerMessage(data: unknown): data is WorkerMessage {
   const m = data as Record<string, unknown>;
   return (m.type === "open" && typeof m.url === "string") || m.type === "new-lead";
 }
+
+/** What an import did; mirrors the backend's `Report`. */
+export interface ImportReport {
+  added: number;
+  refreshed: number;
+  removed: number;
+  skipped_forms: number;
+  unverified: number;
+}

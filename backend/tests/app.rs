@@ -595,3 +595,182 @@ async fn the_page_is_subscribed_to_leadgen_at_startup_and_failures_are_not_fatal
     let h = harness(&graph, None).await;
     assert_eq!(h.state.subscribe_page().await, SubscribeOutcome::Skipped);
 }
+
+// ---------- import and reconciliation ----------
+
+/// A Graph API whose form F1 returns `listed`; lookups answer per id from `lookups`.
+#[derive(Default)]
+struct FakeMeta {
+    listed: Vec<Value>,
+    /// How many extra leads to list, each with a "next" link (simulates a list cut at the cap).
+    more_pages: bool,
+    list_fails: bool,
+    lookups: HashMap<String, (StatusCode, Value)>,
+}
+
+async fn fake_meta(meta: Arc<Mutex<FakeMeta>>) -> String {
+    async fn forms() -> Json<Value> {
+        Json(json!({"data": [{"id": "F1", "name": "Spring form"}]}))
+    }
+    async fn leads(State(m): State<Arc<Mutex<FakeMeta>>>) -> (StatusCode, Json<Value>) {
+        let m = m.lock().unwrap();
+        if m.list_fails {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": "boom", "code": 2}})),
+            );
+        }
+        let mut body = json!({"data": m.listed});
+        if m.more_pages {
+            body["paging"] = json!({"next": "http://127.0.0.1:1/never"});
+        }
+        (StatusCode::OK, Json(body))
+    }
+    async fn node(
+        State(m): State<Arc<Mutex<FakeMeta>>>,
+        Path((_v, id)): Path<(String, String)>,
+    ) -> (StatusCode, Json<Value>) {
+        match m.lock().unwrap().lookups.get(&id) {
+            Some((status, body)) => (*status, Json(body.clone())),
+            None => (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": {"message": "?"}})),
+            ),
+        }
+    }
+    let app = Router::new()
+        .route("/:v/:id/leadgen_forms", get(forms))
+        .route("/:v/:id/leads", get(leads))
+        .route("/:v/:id", get(node))
+        .with_state(meta);
+    format!("http://{}", serve(app).await)
+}
+
+fn graph_lead(id: &str, name: &str) -> Value {
+    json!({
+        "id": id, "created_time": "2026-11-02T08:00:00+0000", "form_id": "F1",
+        "field_data": [{"name": "full_name", "values": [name]}],
+    })
+}
+
+fn missing() -> (StatusCode, Value) {
+    (
+        StatusCode::BAD_REQUEST,
+        json!({"error": {"message": "(#100) does not exist", "code": 100, "error_subcode": 33}}),
+    )
+}
+
+async fn store_lead(h: &Harness, id: &str, age_days: i64) {
+    let created = chrono::Utc::now() - chrono::Duration::days(age_days);
+    let mut lead = meta_leads_backend::store::Lead::bare(
+        id.into(),
+        created,
+        meta_leads_backend::store::LeadSource::Webhook,
+    );
+    lead.form_id = Some("F1".into());
+    lead.title = format!("old {id}");
+    h.state.store.save_lead(lead).await.unwrap();
+}
+
+async fn run_import(h: &Harness) -> (StatusCode, Value) {
+    let res = h
+        .app
+        .clone()
+        .oneshot(Request::post("/api/sync").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = res.status();
+    (status, json_of(res).await)
+}
+
+async fn import_harness(meta: Arc<Mutex<FakeMeta>>) -> Harness {
+    let graph = fake_meta(meta).await;
+    harness_with(&graph, None, |c| c.page_id = "5".into()).await
+}
+
+#[tokio::test]
+async fn import_refreshes_adds_and_removes_only_leads_meta_confirms_are_gone() {
+    let meta = Arc::new(Mutex::new(FakeMeta::default()));
+    {
+        let mut m = meta.lock().unwrap();
+        m.listed = vec![graph_lead("A", "Alice New"), graph_lead("N", "Newbie")];
+        m.lookups.insert("B".into(), missing());
+        m.lookups.insert(
+            "C".into(),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": {"message": "boom"}}),
+            ),
+        );
+    }
+    let h = import_harness(meta).await;
+    store_lead(&h, "A", 1).await; // still on Meta: refreshed
+    store_lead(&h, "B", 1).await; // Meta says it does not exist: removed
+    store_lead(&h, "C", 1).await; // the check failed: kept
+    store_lead(&h, "D", 200).await; // older than Meta's retention: never checked, kept
+
+    let (status, body) = run_import(&h).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({"added": 1, "refreshed": 1, "removed": 1, "skipped_forms": 0, "unverified": 1})
+    );
+    let store = &h.state.store;
+    assert_eq!(store.get_lead("A").await.unwrap().title, "Alice New");
+    assert_eq!(
+        store.get_lead("A").await.unwrap().source,
+        meta_leads_backend::store::LeadSource::Webhook,
+        "how a lead first arrived is kept"
+    );
+    assert!(store.get_lead("N").await.is_some());
+    assert!(store.get_lead("B").await.is_none());
+    assert!(store.get_lead("C").await.is_some());
+    assert!(store.get_lead("D").await.is_some());
+}
+
+#[tokio::test]
+async fn a_failed_form_removes_nothing() {
+    let meta = Arc::new(Mutex::new(FakeMeta::default()));
+    {
+        let mut m = meta.lock().unwrap();
+        m.list_fails = true;
+        m.lookups.insert("B".into(), missing());
+    }
+    let h = import_harness(meta).await;
+    store_lead(&h, "B", 1).await;
+    let (status, body) = run_import(&h).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["skipped_forms"], 1);
+    assert_eq!(body["removed"], 0);
+    assert!(h.state.store.get_lead("B").await.is_some());
+}
+
+#[tokio::test]
+async fn an_empty_or_truncated_list_removes_nothing() {
+    // Empty list: more likely a problem than every lead being deleted.
+    let meta = Arc::new(Mutex::new(FakeMeta::default()));
+    meta.lock().unwrap().lookups.insert("B".into(), missing());
+    let h = import_harness(meta).await;
+    store_lead(&h, "B", 1).await;
+    let (_, body) = run_import(&h).await;
+    assert_eq!(body["removed"], 0);
+    assert!(h.state.store.get_lead("B").await.is_some());
+
+    // List cut at the 200-lead cap: a lead missing from it proves nothing.
+    let meta = Arc::new(Mutex::new(FakeMeta::default()));
+    {
+        let mut m = meta.lock().unwrap();
+        m.listed = (0..200)
+            .map(|i| graph_lead(&format!("L{i}"), "x"))
+            .collect();
+        m.more_pages = true;
+        m.lookups.insert("B".into(), missing());
+    }
+    let h = import_harness(meta).await;
+    store_lead(&h, "B", 1).await;
+    let (_, body) = run_import(&h).await;
+    assert_eq!(body["added"], 200);
+    assert_eq!(body["removed"], 0);
+    assert_eq!(body["skipped_forms"], 1);
+    assert!(h.state.store.get_lead("B").await.is_some());
+}

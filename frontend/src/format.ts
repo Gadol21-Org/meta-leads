@@ -1,3 +1,5 @@
+import type { ImportReport } from "./types";
+
 const ESCAPES: Readonly<Record<string, string>> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
 export const esc = (s: unknown): string => String(s ?? "").replace(/[&<>"']/g, (c) => ESCAPES[c] ?? c);
@@ -33,4 +35,15 @@ export function urlBase64ToUint8Array(base64: string): Uint8Array {
   const pad = "=".repeat((4 - (base64.length % 4)) % 4);
   const raw = atob((base64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
   return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** One toast line for an import: what changed, and what could not be checked. */
+export function importSummary(r: ImportReport): string {
+  const parts = [`${count(r.added, "lead")} added`, `${r.refreshed} refreshed`, `${r.removed} removed`];
+  let text = `Synced with Meta: ${parts.join(", ")}.`;
+  if (r.skipped_forms > 0) text += ` ${count(r.skipped_forms, "form")} could not be fully read, so deletions were not checked there.`;
+  if (r.unverified > 0) text += ` ${count(r.unverified, "lead")} could not be verified and were kept.`;
+  return text;
 }
