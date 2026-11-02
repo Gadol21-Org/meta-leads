@@ -15,7 +15,7 @@ use subtle::ConstantTimeEq;
 
 use crate::store::{Disclaimer, Field, Lead, LeadSource};
 
-pub const FALLBACK_TITLE: &str = "New lead";
+pub const FALLBACK_TITLE: &str = "ליד חדש";
 
 const LEAD_FIELDS: &str = "id,created_time,field_data,ad_id,ad_name,adset_id,adset_name,\
 campaign_id,campaign_name,form_id,is_organic,platform,partner_name,custom_disclaimer_responses";
@@ -446,7 +446,7 @@ impl Graph {
         loop {
             let this_try = req
                 .try_clone()
-                .ok_or_else(|| anyhow::anyhow!("Graph API: request cannot be retried"))?;
+                .ok_or_else(|| anyhow::anyhow!("Graph API: לא ניתן לנסות שוב את הבקשה"))?;
             let res = this_try.send().await?;
             let status = res.status();
             log_usage(res.headers());
@@ -459,7 +459,7 @@ impl Graph {
             let body = res.bytes().await?;
             if status.is_success() {
                 return serde_json::from_slice(&body)
-                    .map_err(|e| anyhow::anyhow!("Graph API: unexpected response: {e}"));
+                    .map_err(|e| anyhow::anyhow!("Graph API: תגובה לא צפויה: {e}"));
             }
             let error = serde_json::from_slice::<GraphErrorEnvelope>(&body)
                 .ok()
@@ -484,7 +484,7 @@ impl Graph {
                 continue;
             }
             let message = if rate_limited {
-                format!("Graph API rate limit reached, try again later: {msg}")
+                format!("הגעתם למגבלת הקריאות של Graph API, נסו שוב מאוחר יותר: {msg}")
             } else {
                 format!("Graph API: {msg}")
             };
@@ -509,7 +509,7 @@ impl Graph {
         let res: SuccessResponse = self.send(req).await?;
         anyhow::ensure!(
             res.success,
-            "Graph API: subscribing the app to the Page was refused"
+            "Graph API: החיבור של האפליקציה לעמוד נדחה"
         );
         Ok(())
     }

@@ -1,14 +1,14 @@
 import { bidi, esc, platformInfo } from "./format";
+import { LOCALE, leads, t } from "./strings";
 import { backLink } from "./views";
 import { changeVsPrevious, RANGES, type Bucket, type DayCount, type Stats } from "./stats";
 
-const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 const pct = (share: number): string => `${Math.round(share * 100)}%`;
 const hourLabel = (h: number): string => `${String(h).padStart(2, "0")}:00`;
 
 function shortDate(key: string): string {
   const [y, m, d] = key.split("-").map(Number);
-  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1).toLocaleDateString(LOCALE, { month: "short", day: "numeric" });
 }
 
 /** A 4px-rounded top, square at the baseline (see the data-viz mark specs). */
@@ -63,16 +63,16 @@ function columnChart(columns: Column[], labels: Map<number, string>): string {
 }
 
 function dayChart(perDay: DayCount[]): string {
-  const columns = perDay.map((d) => ({ count: d.count, tip: `${shortDate(d.date)}: ${count(d.count, "lead")}` }));
+  const columns = perDay.map((d) => ({ count: d.count, tip: `${shortDate(d.date)}: ${leads(d.count)}` }));
   const labels = new Map<number, string>([
     [0, shortDate(perDay[0]?.date ?? "")],
-    [perDay.length - 1, "Today"],
+    [perDay.length - 1, t.stats.today],
   ]);
   return columnChart(columns, labels);
 }
 
 function hourChart(byHour: number[]): string {
-  const columns = byHour.map((n, h) => ({ count: n, tip: `${hourLabel(h)} to ${String(h).padStart(2, "0")}:59: ${count(n, "lead")}` }));
+  const columns = byHour.map((n, h) => ({ count: n, tip: `${t.stats.to(hourLabel(h), `${String(h).padStart(2, "0")}:59`)}: ${leads(n)}` }));
   const labels = new Map<number, string>([0, 6, 12, 18, 23].map((h) => [h, String(h)]));
   return columnChart(columns, labels);
 }
@@ -91,7 +91,7 @@ function ranking(buckets: Bucket[], colored = false): string {
 }
 
 function tile(label: string, value: string, note = ""): string {
-  return `<div class="tile"><div class="tile-label">${esc(label)}</div><div class="tile-value">${bidi(value)}</div>${note ? `<div class="tile-note en">${esc(note)}</div>` : ""}</div>`;
+  return `<div class="tile"><div class="tile-label">${esc(label)}</div><div class="tile-value">${bidi(value)}</div>${note ? `<div class="tile-note">${esc(note)}</div>` : ""}</div>`;
 }
 
 function section(title: string, body: string): string {
@@ -99,28 +99,28 @@ function section(title: string, body: string): string {
 }
 
 export function statsView(s: Stats): string {
-  const ranges = `<nav class="ranges" aria-label="Time range">${RANGES.map(
-    (r) => `<a href="/stats?days=${r}" data-link data-replace class="chip${r === s.days ? " on" : ""}">${r} days</a>`,
+  const ranges = `<nav class="ranges" aria-label="${t.stats.range}">${RANGES.map(
+    (r) => `<a href="/stats?days=${r}" data-link data-replace class="chip${r === s.days ? " on" : ""}">${t.stats.days(r)}</a>`,
   ).join("")}</nav>`;
-  if (s.total === 0) return `${backLink()}${ranges}<p class="empty en">No leads in the last ${s.days} days.</p>`;
+  if (s.total === 0) return `${backLink()}${ranges}<p class="empty">${t.stats.none(s.days)}</p>`;
 
   const change = changeVsPrevious(s.total, s.previousTotal);
-  const avg = s.averagePerDay.toFixed(1).replace(/\.0$/, "");
+  const avg = s.averagePerDay.toLocaleString(LOCALE, { maximumFractionDigits: 1 });
   const tiles = [
-    tile("Leads", String(s.total), change ? `${change} vs the ${s.days} days before` : ""),
-    tile("Today", String(s.today)),
-    tile("Per day", avg, "on average"),
-    s.busiestDay ? tile("Busiest day", shortDate(s.busiestDay.date), count(s.busiestDay.count, "lead")) : "",
-    s.peakHour !== null ? tile("Peak hour", hourLabel(s.peakHour), `${count(s.byHour[s.peakHour] ?? 0, "lead")}, local time`) : "",
-    s.paid + s.organic > 0 ? tile("Paid / organic", `${s.paid} / ${s.organic}`) : "",
+    tile(t.stats.leads, String(s.total), change ? t.stats.vsBefore(change, s.days) : ""),
+    tile(t.stats.today, String(s.today)),
+    tile(t.stats.perDay, avg, t.stats.onAverage),
+    s.busiestDay ? tile(t.stats.busiestDay, shortDate(s.busiestDay.date), leads(s.busiestDay.count)) : "",
+    s.peakHour !== null ? tile(t.stats.peakHour, hourLabel(s.peakHour), `${leads(s.byHour[s.peakHour] ?? 0)}, ${t.stats.localTime}`) : "",
+    s.paid + s.organic > 0 ? tile(t.stats.paidOrganic, `${s.paid} / ${s.organic}`) : "",
   ].join("");
 
   return `${backLink()}${ranges}
     <div class="tiles">${tiles}</div>
-    ${section("Leads per day", `<p class="readout en" id="readout">${esc(count(s.total, "lead"))} in the last ${s.days} days. Tap a bar for its day.</p>${dayChart(s.perDay)}`)}
-    ${section("By platform", ranking(s.byPlatform, true))}
-    ${section("By ad", ranking(s.byAd))}
-    ${section("By campaign", ranking(s.byCampaign))}
-    ${section("By form", ranking(s.byForm))}
-    ${section("By time of day", `<p class="readout en">When leads arrive, in your local time.</p>${hourChart(s.byHour)}`)}`;
+    ${section(t.stats.perDayTitle, `<p class="readout" id="readout">${esc(t.stats.readout(s.total, s.days))}</p>${dayChart(s.perDay)}`)}
+    ${section(t.stats.byPlatform, ranking(s.byPlatform, true))}
+    ${section(t.stats.byAd, ranking(s.byAd))}
+    ${section(t.stats.byCampaign, ranking(s.byCampaign))}
+    ${section(t.stats.byForm, ranking(s.byForm))}
+    ${section(t.stats.byHour, `<p class="readout">${t.stats.hoursReadout}</p>${hourChart(s.byHour)}`)}`;
 }

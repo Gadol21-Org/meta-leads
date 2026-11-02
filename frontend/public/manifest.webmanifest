@@ -1,8 +1,10 @@
 {
   "name": "Meta Leads",
   "short_name": "Leads",
-  "description": "Instant notifications for new Meta leads, with stage management.",
+  "description": "התראות מיידיות על לידים חדשים מ-Meta, עם ניהול שלבים.",
   "id": "/",
+  "lang": "he",
+  "dir": "rtl",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

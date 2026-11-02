@@ -6,6 +6,7 @@ import { statsView } from "./stats-view";
 import { leadView, listView } from "./views";
 import { esc, importSummary } from "./format";
 import { enablePullToRefresh } from "./gestures";
+import { t } from "./strings";
 import { isWorkerMessage, type AppConfig } from "./types";
 
 function $<T extends HTMLElement>(sel: string): T {
@@ -76,13 +77,13 @@ async function route(quiet = false): Promise<boolean> {
     return true;
   } catch (err) {
     if (quiet) toast(errorMessage(err));
-    else view.innerHTML = `<p class="empty">Something went wrong: ${esc(errorMessage(err))}</p>`;
+    else view.innerHTML = `<p class="empty">${esc(t.state.wrong(errorMessage(err)))}</p>`;
     return false;
   }
 }
 
 async function renderLead(id: string, quiet = false): Promise<void> {
-  if (!quiet) view.innerHTML = `<p class="empty">Loading…</p>`;
+  if (!quiet) view.innerHTML = `<p class="empty">${t.state.loading}</p>`;
   try {
     const lead = await api.getLead(id);
     view.innerHTML = leadView(lead);
@@ -92,7 +93,7 @@ async function renderLead(id: string, quiet = false): Promise<void> {
     });
   } catch (err) {
     if (err instanceof api.ApiError && err.status === 404) {
-      view.innerHTML = `<p class="empty">This lead isn't here (it may have been removed in Meta). <a href="/" data-link>Back to leads</a></p>`;
+      view.innerHTML = `<p class="empty">${t.lead.gone} <a href="/" data-link>${t.nav.backToLeads}</a></p>`;
       return;
     }
     throw err;
@@ -103,8 +104,8 @@ async function renderLead(id: string, quiet = false): Promise<void> {
 
 notifyBtn.addEventListener("click", async () => {
   try {
-    if (await push.subscribe(config)) toast("Notifications are on for this device.");
-    else toast("Notifications were not allowed.");
+    if (await push.subscribe(config)) toast(t.notifications.on);
+    else toast(t.notifications.notAllowed);
     await push.updateNotifyButton(notifyBtn, config);
   } catch (e) {
     toast(errorMessage(e));
@@ -119,9 +120,9 @@ menu.addEventListener("click", async (e) => {
   try {
     if (action === "test-push") {
       const { sent } = await api.sendTestPush();
-      toast(`Sent to ${sent} device${sent === 1 ? "" : "s"}.`);
+      toast(t.notifications.sentTo(sent));
     } else if (action === "unsubscribe") {
-      toast((await push.unsubscribe()) ? "Notifications are off for this device." : "This device is not subscribed.");
+      toast((await push.unsubscribe()) ? t.notifications.off : t.notifications.notSubscribed);
       await push.updateNotifyButton(notifyBtn, config);
     }
   } catch (err) {
@@ -160,7 +161,7 @@ async function pullRefresh(): Promise<boolean> {
   try {
     toast(importSummary(await api.syncLeads()), 6000);
   } catch (err) {
-    toast(`Could not sync with Meta: ${errorMessage(err)}`, 6000);
+    toast(t.sync.failed(errorMessage(err)), 6000);
     return false;
   }
   lastLoad = Date.now();
@@ -206,5 +207,5 @@ async function boot(): Promise<void> {
 }
 
 boot().catch((err) => {
-  view.innerHTML = `<p class="empty">Could not start: ${esc(errorMessage(err))}</p>`;
+  view.innerHTML = `<p class="empty">${esc(t.state.couldNotStart(errorMessage(err)))}</p>`;
 });

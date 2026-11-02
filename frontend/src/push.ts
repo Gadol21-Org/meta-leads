@@ -1,5 +1,6 @@
 import * as api from "./api";
 import { urlBase64ToUint8Array } from "./format";
+import { t } from "./strings";
 import type { AppConfig } from "./types";
 
 const supported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
@@ -10,7 +11,7 @@ async function currentSubscription(): Promise<PushSubscription | null> {
   return reg.pushManager.getSubscription();
 }
 
-/** Shows or hides the "Enable notifications" button to match this device's state. */
+/** Shows or hides the t.notifications.enable button to match this device's state. */
 export async function updateNotifyButton(btn: HTMLButtonElement, config: AppConfig): Promise<void> {
   if (!config.pushEnabled) {
     btn.hidden = true;
@@ -20,7 +21,7 @@ export async function updateNotifyButton(btn: HTMLButtonElement, config: AppConf
     // iOS only exposes Web Push once the app is added to the Home Screen.
     btn.hidden = false;
     btn.disabled = true;
-    btn.textContent = /iPhone|iPad/.test(navigator.userAgent) ? "Add to Home Screen for alerts" : "Notifications unsupported";
+    btn.textContent = /iPhone|iPad/.test(navigator.userAgent) ? t.notifications.addToHomeScreen : t.notifications.unsupported;
     return;
   }
   const sub = await currentSubscription();
@@ -28,7 +29,7 @@ export async function updateNotifyButton(btn: HTMLButtonElement, config: AppConf
   if (sub) api.saveSubscription(sub.toJSON()).catch(() => {});
   btn.hidden = Boolean(sub) || Notification.permission === "denied";
   btn.disabled = false;
-  btn.textContent = "Enable notifications";
+  btn.textContent = t.notifications.enable;
 }
 
 export async function subscribe(config: AppConfig): Promise<boolean> {

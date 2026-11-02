@@ -96,7 +96,7 @@ impl AppState {
     async fn fetch_lead(&self, ev: &LeadgenEvent, source: LeadSource) -> anyhow::Result<Lead> {
         if !self.graph.configured() {
             anyhow::bail!(
-                "META_PAGE_ACCESS_TOKEN is not set, so only the webhook data is available."
+                "META_PAGE_ACCESS_TOKEN לא הוגדר, ולכן זמינים רק הנתונים מה-webhook."
             );
         }
         let graph_lead = self.graph.fetch_lead(&ev.leadgen_id).await?;
@@ -152,9 +152,9 @@ impl AppState {
             .flatten()
             .collect();
         let payload = Payload {
-            title: format!("New lead: {}", lead.title),
+            title: format!("ליד חדש: {}", lead.title),
             body: if subtitle.is_empty() {
-                "Tap to see all details".to_string()
+                "הקישו לצפייה בכל הפרטים".to_string()
             } else {
                 subtitle.join(" · ")
             },
@@ -245,7 +245,7 @@ fn fail(status: StatusCode, msg: impl Into<String>) -> Response {
 
 fn server_error(e: anyhow::Error) -> Response {
     tracing::error!("{e}");
-    fail(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+    fail(StatusCode::INTERNAL_SERVER_ERROR, "שגיאה פנימית")
 }
 
 #[derive(Serialize)]
@@ -433,8 +433,8 @@ async fn unsubscribe(State(st): State<Arc<AppState>>, Json(b): Json<Subscription
 
 async fn test_notification(State(st): State<Arc<AppState>>) -> Json<BroadcastResult> {
     let payload = Payload {
-        title: "Meta Leads test".into(),
-        body: "Notifications are working on this device.".into(),
+        title: "בדיקת Meta Leads".into(),
+        body: "ההתראות פועלות במכשיר הזה.".into(),
         url: "/".into(),
         lead_id: None,
         tag: "test".into(),

@@ -19,9 +19,9 @@ describe("format", () => {
 
   it("formats relative times", () => {
     const now = Date.parse("2026-11-02T12:00:00Z");
-    expect(relTime("2026-11-02T11:59:50Z", now)).toBe("just now");
-    expect(relTime("2026-11-02T11:30:00Z", now)).toBe("30m ago");
-    expect(relTime("2026-11-02T09:00:00Z", now)).toBe("3h ago");
+    expect(relTime("2026-11-02T11:59:50Z", now)).toBe("הרגע");
+    expect(relTime("2026-11-02T11:30:00Z", now)).toBe("לפני 30 דק׳");
+    expect(relTime("2026-11-02T09:00:00Z", now)).toBe("לפני 3 שע׳");
     expect(relTime("garbage", now)).toBe("");
   });
 
@@ -61,8 +61,8 @@ describe("views", () => {
 
   it("shows disclaimer answers", () => {
     const html = leadView({ ...lead, disclaimers: [{ key: "terms", checked: true }, { key: "ads", checked: false }] });
-    expect(html).toContain("Checked");
-    expect(html).toContain("Not checked");
+    expect(html).toContain("סומן");
+    expect(html).toContain("לא סומן");
   });
 
   it("offers a retry when the Graph lookup failed", () => {
@@ -72,19 +72,19 @@ describe("views", () => {
   it("links list rows to the lead page", () => {
     const html = listView([lead], { metaConfigured: true, pushEnabled: true, vapidPublicKey: "k" });
     expect(html).toContain('href="/leads/111"');
-    expect(listView([], { metaConfigured: false, pushEnabled: false, vapidPublicKey: null })).toContain("Meta page token");
+    expect(listView([], { metaConfigured: false, pushEnabled: false, vapidPublicKey: null })).toContain("אסימון העמוד של Meta");
   });
 });
 
 describe("importSummary", () => {
   it("reports changes and warns about what could not be checked", () => {
     expect(importSummary({ added: 1, refreshed: 4, removed: 2, skipped_forms: 0, unverified: 0 })).toBe(
-      "Synced with Meta: 1 lead added, 2 leads removed.",
+      "סונכרן עם Meta: ליד אחד נוספו, 2 לידים הוסרו.",
     );
-    expect(importSummary({ added: 0, refreshed: 4, removed: 0, skipped_forms: 0, unverified: 0 })).toBe("Up to date with Meta.");
+    expect(importSummary({ added: 0, refreshed: 4, removed: 0, skipped_forms: 0, unverified: 0 })).toBe("הכול מעודכן מול Meta.");
     const text = importSummary({ added: 0, refreshed: 0, removed: 0, skipped_forms: 2, unverified: 1 });
-    expect(text).toContain("2 forms could not be fully read");
-    expect(text).toContain("1 lead could not be verified");
+    expect(text).toContain("2 טפסים");
+    expect(text).toContain("ליד אחד, והם נשמרו");
   });
 });
 
