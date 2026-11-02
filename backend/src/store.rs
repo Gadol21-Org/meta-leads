@@ -180,6 +180,14 @@ impl Store {
         self.persist(&d).await
     }
 
+    pub async fn remove_lead(&self, id: &str) -> anyhow::Result<()> {
+        let mut d = self.data.lock().await;
+        if d.leads.remove(id).is_some() {
+            self.persist(&d).await?;
+        }
+        Ok(())
+    }
+
     pub async fn list_subscriptions(&self) -> Vec<Subscription> {
         self.data
             .lock()

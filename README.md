@@ -51,8 +51,15 @@ Meta lead form ──webhook (leadgen)──▶ /webhook ──Graph API──�
    app from the home screen, then enable notifications. Apple only allows web
    push for installed web apps.
 
-The ⋯ menu has **Import existing leads from Meta** (reads past leads from all
-the page's forms without notifying), and **Send test notification**.
+The ⋯ menu has **Sync with Meta** and **Send test notification**.
+
+Meta is the source of truth and the local file is a cache. **Sync with Meta** reads the leads of every form
+on the Page (up to 200 per form, without notifying), adds new ones and refreshes stored ones. A stored lead is
+removed only when it is missing from that list and Meta also answers "does not exist" when asked for that
+one lead by id. Nothing is removed when a form could not be read completely (error, rate limit, more than
+200 leads, or an empty list), when the lead is older than 80 days (Meta stops serving old leads), when the
+lead's form is gone from the Page, or when the check itself failed. Meta has no webhook for deleted leads,
+so a deletion shows up only at the next sync. Nothing is ever written to Meta.
 
 ## Local testing
 
