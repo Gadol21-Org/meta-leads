@@ -1,6 +1,12 @@
 import { bidi, esc, fmtDate, linkify, platformBadge, relTime } from "./format";
 import type { AppConfig, Lead, LeadSummary } from "./types";
 
+/** A visible back button. It steps back through the app's own history when there is some (so the
+ * phone's back gesture and this button agree), and goes to the list otherwise. */
+export function backLink(): string {
+  return `<a href="/" data-link data-back class="back"><span class="arrow" aria-hidden="true">←</span> Back to leads</a>`;
+}
+
 export function listView(leads: LeadSummary[], config: AppConfig): string {
   const banner = config.metaConfigured
     ? ""
@@ -36,7 +42,7 @@ export function leadView(lead: Lead): string {
   ];
   const disclaimers = (lead.disclaimers ?? []).map((d) => [d.key, d.checked ? "Checked" : "Not checked"] as const);
   return `
-    <a href="/" data-link class="back"><span class="arrow" aria-hidden="true">←</span> All leads</a>
+    ${backLink()}
     <section class="card">
       <h1>${bidi(lead.title)} ${platformBadge(lead.platform)}</h1>
       ${lead.fetch_error ? `<p class="banner">${esc(lead.fetch_error)} <button class="link" id="refresh-btn">Retry</button></p>` : ""}

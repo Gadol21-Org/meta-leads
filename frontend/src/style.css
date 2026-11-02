@@ -79,7 +79,10 @@ main { max-width: 720px; margin: 0 auto; padding: 16px; }
 .error { color: var(--error); }
 .empty { text-align: center; color: var(--muted); padding: 40px 16px; }
 .banner { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
-.back { display: inline-block; margin-bottom: 12px; text-decoration: none; }
+.back {
+  display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px; padding: 8px 14px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--card); text-decoration: none; font-size: 15px;
+}
 .arrow { display: inline-block; }
 [dir=rtl] .arrow { transform: scaleX(-1); }
 .fields { display: grid; grid-template-columns: minmax(110px, 35%) 1fr; gap: 10px 14px; margin: 0; }

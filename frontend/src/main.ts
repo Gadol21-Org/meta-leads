@@ -32,10 +32,14 @@ function toast(msg: string, ms = 3000): void {
 
 // ---------- routing ----------
 
-function navigate(url: string): void {
-  history.pushState({}, "", url);
+/** Pages the app opened itself carry `{ app: true }`, so "back" knows there is app history to return to. */
+function navigate(url: string, replace = false): void {
+  if (replace) history.replaceState(history.state, "", url);
+  else history.pushState({ app: true }, "", url);
   void route();
 }
+
+const hasAppHistory = (): boolean => (history.state as { app?: boolean } | null)?.app === true;
 
 // Tapping a bar in a stats chart shows its value in the line above the chart.
 view.addEventListener("click", (e) => {
@@ -48,7 +52,8 @@ document.addEventListener("click", (e) => {
   const a = e.target instanceof Element ? e.target.closest<HTMLAnchorElement>("a[data-link]") : null;
   if (a && a.origin === location.origin && !e.metaKey && !e.ctrlKey) {
     e.preventDefault();
-    navigate(a.pathname + a.search);
+    if (a.hasAttribute("data-back") && hasAppHistory()) history.back();
+    else navigate(a.pathname + a.search, a.hasAttribute("data-replace"));
   }
 });
 // A long press on a lead row opens the browser's link menu (Android); the rows are tap targets only.

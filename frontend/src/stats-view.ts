@@ -1,4 +1,5 @@
 import { bidi, esc, platformInfo } from "./format";
+import { backLink } from "./views";
 import { changeVsPrevious, RANGES, type Bucket, type DayCount, type Stats } from "./stats";
 
 const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -99,9 +100,9 @@ function section(title: string, body: string): string {
 
 export function statsView(s: Stats): string {
   const ranges = `<nav class="ranges" aria-label="Time range">${RANGES.map(
-    (r) => `<a href="/stats?days=${r}" data-link class="chip${r === s.days ? " on" : ""}">${r} days</a>`,
+    (r) => `<a href="/stats?days=${r}" data-link data-replace class="chip${r === s.days ? " on" : ""}">${r} days</a>`,
   ).join("")}</nav>`;
-  if (s.total === 0) return `${ranges}<p class="empty en">No leads in the last ${s.days} days.</p>`;
+  if (s.total === 0) return `${backLink()}${ranges}<p class="empty en">No leads in the last ${s.days} days.</p>`;
 
   const change = changeVsPrevious(s.total, s.previousTotal);
   const avg = s.averagePerDay.toFixed(1).replace(/\.0$/, "");
@@ -114,7 +115,7 @@ export function statsView(s: Stats): string {
     s.paid + s.organic > 0 ? tile("Paid / organic", `${s.paid} / ${s.organic}`) : "",
   ].join("");
 
-  return `${ranges}
+  return `${backLink()}${ranges}
     <div class="tiles">${tiles}</div>
     ${section("Leads per day", `<p class="readout en" id="readout">${esc(count(s.total, "lead"))} in the last ${s.days} days. Tap a bar for its day.</p>${dayChart(s.perDay)}`)}
     ${section("By platform", ranking(s.byPlatform, true))}
