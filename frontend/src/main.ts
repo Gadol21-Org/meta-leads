@@ -5,7 +5,7 @@ import { computeStats, parseRange } from "./stats";
 import { statsView } from "./stats-view";
 import { leadView, listView } from "./views";
 import { esc, importSummary } from "./format";
-import { enableEdgeSwipeBack, enablePullToRefresh } from "./gestures";
+import { enablePullToRefresh } from "./gestures";
 import { t } from "./strings";
 import { isWorkerMessage, type AppConfig } from "./types";
 
@@ -177,7 +177,6 @@ async function pullRefresh(): Promise<boolean> {
   return route(true);
 }
 enablePullToRefresh(view, pullRefresh);
-enableEdgeSwipeBack(hasAppHistory, () => history.back());
 
 // ---------- updates ----------
 

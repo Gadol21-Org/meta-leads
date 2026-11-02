@@ -86,37 +86,3 @@ export function enablePullToRefresh(content: HTMLElement, refresh: () => Promise
   document.addEventListener("touchcancel", () => void end());
   content.setAttribute("data-pull", "");
 }
-
-const EDGE = 28;
-const SWIPE_MIN = 70;
-
-/** iOS reserves the left-edge swipe for "back", which points the wrong way in a right-to-left app, and
- * apps cannot change that. So the app also goes back on a swipe in from the right edge, matching the
- * back button. `canGoBack` says whether the app has a page of its own to return to. */
-export function enableEdgeSwipeBack(canGoBack: () => boolean, goBack: () => void): void {
-  let start: { x: number; y: number } | undefined;
-  document.addEventListener(
-    "touchstart",
-    (e) => {
-      const first = e.touches[0];
-      const fromRightEdge = first !== undefined && first.clientX >= window.innerWidth - EDGE;
-      const open = document.querySelector("dialog[open]") !== null;
-      start = fromRightEdge && e.touches.length === 1 && !open && canGoBack() ? { x: first.clientX, y: first.clientY } : undefined;
-    },
-    { passive: true },
-  );
-  document.addEventListener(
-    "touchend",
-    (e) => {
-      const touch = e.changedTouches[0];
-      const from = start;
-      start = undefined;
-      if (!from || !touch) return;
-      const dx = touch.clientX - from.x;
-      // A deliberate, mostly horizontal swipe towards the inside of the screen.
-      if (dx <= -SWIPE_MIN && Math.abs(dx) > 2 * Math.abs(touch.clientY - from.y)) goBack();
-    },
-    { passive: true },
-  );
-  document.addEventListener("touchcancel", () => (start = undefined));
-}
