@@ -112,7 +112,7 @@ export function statsView(s: Stats): string {
     tile(t.stats.perDay, avg, t.stats.onAverage),
     s.busiestDay ? tile(t.stats.busiestDay, shortDate(s.busiestDay.date), leads(s.busiestDay.count)) : "",
     s.peakHour !== null ? tile(t.stats.peakHour, hourLabel(s.peakHour), `${leads(s.byHour[s.peakHour] ?? 0)}, ${t.stats.localTime}`) : "",
-    s.paid + s.organic > 0 ? tile(t.stats.paidOrganic, `${s.paid} / ${s.organic}`) : "",
+    ...(s.paid + s.organic > 0 ? [tile(t.stats.paid, String(s.paid)), tile(t.stats.organic, String(s.organic))] : []),
   ].join("");
 
   return `${backLink()}${ranges}
