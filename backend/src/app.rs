@@ -490,10 +490,23 @@ async fn sync(State(st): State<Arc<AppState>>) -> Response {
             "Set META_PAGE_ID and META_PAGE_ACCESS_TOKEN first.",
         );
     }
+    let started = std::time::Instant::now();
+    tracing::info!(
+        "import: reading forms and leads for Page {}",
+        st.config.page_id
+    );
     let all = match st.graph.all_leads(&st.config.page_id, 200).await {
         Ok(v) => v,
-        Err(e) => return fail(StatusCode::BAD_GATEWAY, e.to_string()),
+        Err(e) => {
+            tracing::warn!("import failed after {:?}: {e}", started.elapsed());
+            return fail(StatusCode::BAD_GATEWAY, e.to_string());
+        }
     };
+    tracing::info!(
+        "import: Meta returned {} leads in {:?}",
+        all.len(),
+        started.elapsed()
+    );
     let mut added = 0;
     for (graph_lead, form_name) in all {
         if st.store.has_lead(&graph_lead.id).await {

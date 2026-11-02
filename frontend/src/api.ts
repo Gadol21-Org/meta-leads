@@ -18,7 +18,13 @@ async function request<T>(path: string, init: { method?: string; body?: unknown 
     throw new ApiError("Session expired. Reload the page to sign in again.", res.status || 401);
   }
   const json = (await res.json().catch(() => ({}))) as { error?: string } & T;
-  if (!res.ok) throw new ApiError(json.error ?? `HTTP ${res.status}`, res.status);
+  if (!res.ok) {
+    // Our own errors carry Meta's message. Anything else came from a proxy (restart, timeout, crash).
+    throw new ApiError(
+      json.error ?? `The server did not answer properly (HTTP ${res.status}). It may be restarting or the request timed out; check the container logs.`,
+      res.status,
+    );
+  }
   return json;
 }
 
