@@ -81,17 +81,38 @@ pub async fn import(
             .await?;
         }
         if !form.complete {
+            tracing::info!(
+                "import: form {} has more than {MAX_PER_FORM} leads; not checking it for deletions",
+                form.form_id
+            );
             report.skipped_forms += 1;
             continue;
         }
         // An empty list for a form we hold leads for is more likely a problem than a mass
         // deletion, so nothing is removed on its strength.
+        let stored = store.list_leads().await;
         if listed.is_empty() {
+            let held = stored
+                .iter()
+                .filter(|l| l.form_id.as_deref() == Some(form.form_id.as_str()))
+                .count();
+            if held > 0 {
+                tracing::info!(
+                    "import: Meta returned no leads for form {} but {held} are stored; keeping them",
+                    form.form_id
+                );
+            }
             continue;
         }
         let listed: HashSet<&str> = listed.iter().map(String::as_str).collect();
-        let stored = store.list_leads().await;
-        for id in deletion_candidates(&stored, &form.form_id, &listed, now) {
+        let candidates = deletion_candidates(&stored, &form.form_id, &listed, now);
+        tracing::info!(
+            "import: form {}: {} listed by Meta, {} stored leads to verify",
+            form.form_id,
+            listed.len(),
+            candidates.len()
+        );
+        for id in candidates {
             if checks_left == 0 {
                 report.unverified += 1;
                 continue;
@@ -99,6 +120,7 @@ pub async fn import(
             checks_left -= 1;
             match graph.lookup_lead(&id).await {
                 LeadLookup::Gone => {
+                    tracing::info!("import: removing lead {id}: Meta says it no longer exists");
                     store.remove_lead(&id).await?;
                     report.removed += 1;
                 }
