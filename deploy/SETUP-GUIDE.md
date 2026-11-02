@@ -91,9 +91,48 @@ You get these from the [Graph API Explorer](https://developers.facebook.com/tool
    ```
    then re-run **Actions > Deploy > Run workflow** (the container only reads the settings at deploy).
 
-Treat the app secret and page token like passwords. An alternative that avoids a personal user
-token is a **system user** (Business settings > Users > System users) with the Page assigned and a
-token generated with the same permissions.
+### Does the app need to log in again every 60 days?
+
+No. Only the *user* token from step 3 lasts about 60 days. The **page** token you get from it in step 4
+does not expire, and that page token is the only token the app uses. It stops working only if you
+change your Facebook password, remove the app, lose admin access to the Page, or revoke it by hand.
+The sturdier option is a system-user token (below), which is not tied to your personal account at all.
+
+### `me/accounts` returns an empty `data` list
+
+A token can be valid and still see no Pages. Check in this order:
+
+1. **Which permissions and Pages did the token get?** Open
+   `https://graph.facebook.com/v21.0/me/permissions?access_token=<LONG_USER>`. You need
+   `pages_show_list` with `status: granted`. If it is missing or `declined`, generate the token again.
+2. **Was the Page selected in the permission dialog?** When you click Generate Access Token, Meta shows
+   "Choose the Pages you want to use"; if you picked none, the list is empty. Run
+   `https://graph.facebook.com/v21.0/debug_token?input_token=<LONG_USER>&access_token=<APP_ID>|<APP_SECRET>`
+   and look at `granular_scopes`: `pages_show_list` must have your Page's id in `target_ids`. If it is
+   empty, generate the token again and tick the Page (or "Opt in to all current and future Pages").
+3. **Is the token from the right app?** `debug_token` shows the `app_id`; it must be your lead app.
+4. **Is the Page owned through a Business portfolio?** Then a personal token often lists nothing. Either add
+   the `business_management` permission when generating the user token and read
+   `<BUSINESS_ID>/owned_pages` instead, or skip user tokens and use a system user (below).
+5. **Are you an admin of the Page?** In the Page's settings you need full control (admin), or Business Suite
+   access with "Manage Page" for the Page.
+
+You can also skip `me/accounts`: if you already know `<PAGE_ID>` (Page > About > Page transparency, or in
+Business Suite settings), call `<PAGE_ID>?fields=access_token&access_token=<LONG_USER>`.
+
+### System user token (recommended, not tied to a person)
+
+1. [business.facebook.com/settings](https://business.facebook.com/settings) > **Users > System users** > **Add**,
+   name it `meta-leads`, role **Admin** (or Employee).
+2. **Assign assets**: select the system user > **Add assets** > **Pages** > pick your Page > turn on
+   **Manage Page** (full control). Also assign your **app** (Apps tab) with full control.
+3. **Generate new token**: choose your app, set token expiration to **Never**, tick `pages_show_list`,
+   `pages_read_engagement`, `pages_manage_metadata`, `pages_manage_ads` and `leads_retrieval`, and copy it.
+4. Get the page token from it: `https://graph.facebook.com/v21.0/<PAGE_ID>?fields=access_token&access_token=<SYSTEM_USER_TOKEN>`.
+   Use the returned `access_token` as `META_PAGE_ACCESS_TOKEN` (the system user token itself also works
+   for reading leads, but the page token is what step 6 above expects). Your Page id is in the Page's
+   settings (Business Suite > Settings > Page > the number under the name).
+5. Continue with step 6 (subscribe the app to the Page) and 7 (`LEADS_ENV`).
 
 ## 6. Testing, then real leads
 
