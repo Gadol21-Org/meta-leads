@@ -5,6 +5,7 @@
 //! backend never touches untyped `serde_json::Value`s.
 
 use std::fmt;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
@@ -239,6 +240,59 @@ struct GraphErrorEnvelope {
 #[derive(Debug, Deserialize)]
 struct GraphErrorBody {
     message: Option<String>,
+    code: Option<i64>,
+}
+
+/// Meta error codes that mean "slow down": app (4), user (17), page/feature (32, 613)
+/// and Business Use Case (80000 to 80014) call limits.
+fn is_rate_limit_code(code: i64) -> bool {
+    matches!(code, 4 | 17 | 32 | 613) || (80000..=80014).contains(&code)
+}
+
+const MAX_ATTEMPTS: u32 = 3;
+const BASE_DELAY: Duration = Duration::from_secs(2);
+const MAX_DELAY: Duration = Duration::from_secs(30);
+/// Usage (percent of the hourly allowance) at which a warning is logged.
+const USAGE_WARN_PERCENT: u64 = 75;
+
+/// Exponential backoff for the retry after `attempt` (1-based), capped at `MAX_DELAY`.
+fn backoff_delay(attempt: u32) -> Duration {
+    BASE_DELAY
+        .saturating_mul(1 << (attempt - 1).min(8))
+        .min(MAX_DELAY)
+}
+
+/// The highest percentage found in a usage header such as
+/// `{"call_count":28,"total_time":25,"total_cputime":25}` or the nested
+/// `X-Business-Use-Case-Usage` form (`{"<id>":[{"call_count":3,...}]}`).
+fn max_usage_percent(value: &serde_json::Value) -> u64 {
+    match value {
+        serde_json::Value::Number(n) => n.as_u64().unwrap_or(0),
+        serde_json::Value::Object(map) => map
+            .iter()
+            .filter(|(k, _)| !matches!(k.as_str(), "type" | "estimated_time_to_regain_access"))
+            .map(|(_, v)| max_usage_percent(v))
+            .max()
+            .unwrap_or(0),
+        serde_json::Value::Array(items) => items.iter().map(max_usage_percent).max().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+fn log_usage(headers: &reqwest::header::HeaderMap) {
+    for name in ["x-app-usage", "x-business-use-case-usage"] {
+        let Some(value) = headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok())
+        else {
+            continue;
+        };
+        let percent = max_usage_percent(&value);
+        if percent >= USAGE_WARN_PERCENT {
+            tracing::warn!("Graph API usage is at {percent}% of the hourly limit ({name})");
+        }
+    }
 }
 
 // ---------- normalising ----------
@@ -356,22 +410,59 @@ impl Graph {
         .await
     }
 
+    /// Sends the request, retrying only rate-limit errors (at most `MAX_ATTEMPTS` tries, with
+    /// capped exponential backoff, or Meta's `Retry-After` when given). Other errors fail at once.
     async fn send<T: serde::de::DeserializeOwned>(
         &self,
         req: reqwest::RequestBuilder,
     ) -> anyhow::Result<T> {
-        let res = req.send().await?;
-        let status = res.status();
-        let body = res.bytes().await?;
-        if !status.is_success() {
-            let msg = serde_json::from_slice::<GraphErrorEnvelope>(&body)
+        let mut attempt = 1;
+        loop {
+            let this_try = req
+                .try_clone()
+                .ok_or_else(|| anyhow::anyhow!("Graph API: request cannot be retried"))?;
+            let res = this_try.send().await?;
+            let status = res.status();
+            log_usage(res.headers());
+            let retry_after = res
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(Duration::from_secs);
+            let body = res.bytes().await?;
+            if status.is_success() {
+                return serde_json::from_slice(&body)
+                    .map_err(|e| anyhow::anyhow!("Graph API: unexpected response: {e}"));
+            }
+            let error = serde_json::from_slice::<GraphErrorEnvelope>(&body)
                 .ok()
-                .and_then(|e| e.error.message)
+                .map(|e| e.error);
+            let rate_limited = status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                || error
+                    .as_ref()
+                    .and_then(|e| e.code)
+                    .is_some_and(is_rate_limit_code);
+            let msg = error
+                .and_then(|e| e.message)
                 .unwrap_or_else(|| format!("HTTP {status}"));
+            if rate_limited && attempt < MAX_ATTEMPTS {
+                let delay = retry_after
+                    .unwrap_or_else(|| backoff_delay(attempt))
+                    .min(MAX_DELAY);
+                tracing::warn!(
+                    "Graph API rate limit ({msg}); retry {attempt}/{} in {delay:?}",
+                    MAX_ATTEMPTS - 1
+                );
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+                continue;
+            }
+            if rate_limited {
+                anyhow::bail!("Graph API rate limit reached, try again later: {msg}");
+            }
             anyhow::bail!("Graph API: {msg}");
         }
-        serde_json::from_slice(&body)
-            .map_err(|e| anyhow::anyhow!("Graph API: unexpected response: {e}"))
     }
 
     /// Subscribes the app that issued the page token to the Page's `leadgen` webhook field.
@@ -447,5 +538,40 @@ impl Graph {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod rate_limit_tests {
+    use super::*;
+
+    #[test]
+    fn recognises_rate_limit_codes() {
+        for code in [4, 17, 32, 613, 80001, 80004] {
+            assert!(is_rate_limit_code(code), "{code}");
+        }
+        for code in [1, 100, 190, 200] {
+            assert!(!is_rate_limit_code(code), "{code}");
+        }
+    }
+
+    #[test]
+    fn backoff_doubles_and_is_capped() {
+        assert_eq!(backoff_delay(1), Duration::from_secs(2));
+        assert_eq!(backoff_delay(2), Duration::from_secs(4));
+        assert_eq!(backoff_delay(20), MAX_DELAY);
+    }
+
+    #[test]
+    fn reads_usage_from_both_header_shapes() {
+        let app: serde_json::Value =
+            serde_json::from_str(r#"{"call_count":28,"total_time":80,"total_cputime":25}"#)
+                .unwrap();
+        assert_eq!(max_usage_percent(&app), 80);
+        let buc: serde_json::Value = serde_json::from_str(
+            r#"{"123":[{"type":"ads_management","call_count":91,"estimated_time_to_regain_access":0}]}"#,
+        )
+        .unwrap();
+        assert_eq!(max_usage_percent(&buc), 91);
     }
 }
