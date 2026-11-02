@@ -16,6 +16,7 @@ use crate::{
     assets,
     config::Config,
     meta::{self, Graph, LeadgenEvent, WebhookPayload},
+    pages::{PageAuth, Pages},
     push::{BroadcastResult, Payload, Pusher},
     store::{Lead, LeadSource, Store, Subscription},
 };
@@ -24,6 +25,7 @@ pub struct AppState {
     pub config: Config,
     pub store: Store,
     pub graph: Graph,
+    pub pages: Pages,
     pub pusher: Pusher,
     /// Lead ids being processed right now, so a Meta retry can't notify twice.
     in_flight: Mutex<HashSet<String>>,
@@ -34,7 +36,8 @@ impl AppState {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
             .build()?;
-        let graph = Graph::new(&config.graph_base, &config.page_access_token, http.clone());
+        let graph = Graph::new(&config.graph_base, http.clone());
+        let pages = Pages::from_config(&config);
         let pusher = Pusher::new(
             &config.vapid_public_key,
             &config.vapid_private_key,
@@ -45,20 +48,31 @@ impl AppState {
             config,
             store,
             graph,
+            pages,
             pusher,
             in_flight: Mutex::new(HashSet::new()),
         }))
     }
 
-    /// The lead as Meta describes it now, merged with what we already know
-    /// locally (form name, how and when it first arrived).
-    async fn fetch_lead(&self, ev: &LeadgenEvent, source: LeadSource) -> anyhow::Result<Lead> {
-        if !self.graph.configured() {
-            anyhow::bail!(
-                "META_PAGE_ACCESS_TOKEN is not set, so only the webhook data is available."
-            );
-        }
-        let graph_lead = self.graph.fetch_lead(&ev.leadgen_id).await?;
+    /// Looks up Page names and derives Page tokens from `META_USER_TOKEN`. Call once at startup.
+    pub async fn resolve_pages(&self) {
+        self.pages.resolve(&self.graph, &self.config).await;
+    }
+
+    /// The lead as Meta describes it now, read with the token of the Page it came from.
+    async fn fetch_lead(
+        &self,
+        ev: &LeadgenEvent,
+        page: Option<&PageAuth>,
+        source: LeadSource,
+    ) -> anyhow::Result<Lead> {
+        let page = page.ok_or_else(|| {
+            anyhow::anyhow!(
+                "No access token is configured for Page {}, so only the webhook data is available.",
+                ev.page_id
+            )
+        })?;
+        let graph_lead = self.graph.fetch_lead(&page.token, &ev.leadgen_id).await?;
         let mut lead = graph_lead.into_lead(source, ev.created_time.unwrap_or_else(Utc::now));
         lead.form_id = lead.form_id.or_else(|| ev.form_id.clone());
         Ok(lead)
@@ -67,7 +81,8 @@ impl AppState {
     /// Fetches a lead from Meta and stores it. Returns (lead, is_new).
     async fn ingest(&self, ev: &LeadgenEvent, source: LeadSource) -> anyhow::Result<(Lead, bool)> {
         let existing = self.store.get_lead(&ev.leadgen_id).await;
-        let mut lead = match self.fetch_lead(ev, source).await {
+        let page = self.pages.get(&ev.page_id).await;
+        let mut lead = match self.fetch_lead(ev, page.as_ref(), source).await {
             Ok(lead) => lead,
             Err(e) => {
                 tracing::error!("could not fetch lead {}: {e}", ev.leadgen_id);
@@ -88,14 +103,11 @@ impl AppState {
             }
         };
         let old = self.store.get_lead(&ev.leadgen_id).await;
-        lead.page_id = Some(ev.page_id.clone())
-            .filter(|s| !s.is_empty())
-            .or_else(|| Some(self.config.page_id.clone()).filter(|s| !s.is_empty()));
+        lead.page_id = Some(ev.page_id.clone()).filter(|s| !s.is_empty());
+        lead.page_name = page.as_ref().and_then(|p| p.name.clone());
         lead.form_name = old.as_ref().and_then(|l| l.form_name.clone());
-        if let (None, Some(form_id)) = (&lead.form_name, &lead.form_id) {
-            if self.graph.configured() {
-                lead.form_name = self.graph.fetch_form_name(form_id).await;
-            }
+        if let (None, Some(form_id), Some(page)) = (&lead.form_name, &lead.form_id, &page) {
+            lead.form_name = self.graph.fetch_form_name(&page.token, form_id).await;
         }
         if let Some(old) = &old {
             lead.source = old.source;
@@ -106,10 +118,20 @@ impl AppState {
     }
 
     async fn notify_new_lead(&self, lead: &Lead) {
-        let subtitle: Vec<&str> = [lead.form_name.as_deref(), lead.campaign_name.as_deref()]
-            .into_iter()
-            .flatten()
-            .collect();
+        // Only name the Page when there is more than one to tell apart.
+        let page_name = if self.pages.list().await.len() > 1 {
+            lead.page_name.as_deref()
+        } else {
+            None
+        };
+        let subtitle: Vec<&str> = [
+            page_name,
+            lead.form_name.as_deref(),
+            lead.campaign_name.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         let payload = Payload {
             title: format!("New lead: {}", lead.title),
             body: if subtitle.is_empty() {
@@ -132,9 +154,6 @@ impl AppState {
 
     async fn process_event(&self, ev: LeadgenEvent) {
         let id = ev.leadgen_id.clone();
-        if !self.config.page_id.is_empty() && ev.page_id != self.config.page_id {
-            return;
-        }
         // Meta retries and can deliver the same lead twice; notify only once.
         if self.store.has_lead(&id).await || !self.in_flight.lock().await.insert(id.clone()) {
             return;
@@ -186,6 +205,13 @@ struct ConfigResponse {
     vapid_public_key: Option<String>,
     push_enabled: bool,
     meta_configured: bool,
+    pages: Vec<PageView>,
+}
+
+#[derive(Serialize)]
+struct PageView {
+    id: String,
+    name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -193,6 +219,7 @@ struct LeadSummary {
     id: String,
     title: String,
     created_time: DateTime<Utc>,
+    page_name: Option<String>,
     form_name: Option<String>,
     campaign_name: Option<String>,
     platform: Option<String>,
@@ -216,6 +243,8 @@ struct OkResponse {
 #[derive(Serialize)]
 struct SyncResponse {
     added: usize,
+    /// One message per Page that could not be read; the other Pages are still imported.
+    errors: Vec<String>,
 }
 
 // ---------- Meta webhook ----------
@@ -269,10 +298,21 @@ async fn webhook_receive(
 // ---------- app API (read-only) ----------
 
 async fn api_config(State(st): State<Arc<AppState>>) -> Json<ConfigResponse> {
+    let pages: Vec<PageView> = st
+        .pages
+        .list()
+        .await
+        .into_iter()
+        .map(|p| PageView {
+            id: p.id,
+            name: p.name,
+        })
+        .collect();
     Json(ConfigResponse {
         vapid_public_key: Some(st.pusher.public_key.clone()).filter(|k| !k.is_empty()),
         push_enabled: st.pusher.enabled(),
-        meta_configured: st.graph.configured(),
+        meta_configured: !pages.is_empty(),
+        pages,
     })
 }
 
@@ -348,6 +388,7 @@ async fn list_leads(State(st): State<Arc<AppState>>) -> Json<LeadsResponse> {
             id: l.id,
             title: l.title,
             created_time: l.created_time,
+            page_name: l.page_name,
             form_name: l.form_name,
             campaign_name: l.campaign_name,
             platform: l.platform,
@@ -369,7 +410,7 @@ async fn get_lead(
     let Some(mut lead) = st.store.get_lead(&id).await else {
         return fail(StatusCode::NOT_FOUND, "lead not found");
     };
-    if q.refresh.as_deref() == Some("1") && st.graph.configured() {
+    if q.refresh.as_deref() == Some("1") {
         let ev = LeadgenEvent {
             leadgen_id: lead.id.clone(),
             page_id: lead.page_id.clone().unwrap_or_default(),
@@ -384,31 +425,39 @@ async fn get_lead(
     Json(LeadResponse { lead }).into_response()
 }
 
-/// Read-only import of existing leads from all of the page's forms (no
+/// Read-only import of existing leads from all forms of every configured Page (no
 /// notifications). Nothing is written to Meta.
 async fn sync(State(st): State<Arc<AppState>>) -> Response {
-    if !st.graph.configured() || st.config.page_id.is_empty() {
+    let pages = st.pages.list().await;
+    if pages.is_empty() {
         return fail(
             StatusCode::BAD_REQUEST,
-            "Set META_PAGE_ID and META_PAGE_ACCESS_TOKEN first.",
+            "Configure at least one Page token first (see the setup guide).",
         );
     }
-    let all = match st.graph.all_leads(&st.config.page_id, 200).await {
-        Ok(v) => v,
-        Err(e) => return fail(StatusCode::BAD_GATEWAY, e.to_string()),
-    };
     let mut added = 0;
-    for (graph_lead, form_name) in all {
-        if st.store.has_lead(&graph_lead.id).await {
-            continue;
+    let mut errors = Vec::new();
+    for page in pages {
+        let leads = match st.graph.all_leads(&page.token, &page.id, 200).await {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("{}: {e}", page.name.as_deref().unwrap_or(&page.id)));
+                continue;
+            }
+        };
+        for (graph_lead, form_name) in leads {
+            if st.store.has_lead(&graph_lead.id).await {
+                continue;
+            }
+            let mut lead = graph_lead.into_lead(LeadSource::Sync, Utc::now());
+            lead.page_id = Some(page.id.clone());
+            lead.page_name = page.name.clone();
+            lead.form_name = form_name;
+            if let Err(e) = st.store.save_lead(lead).await {
+                return server_error(e);
+            }
+            added += 1;
         }
-        let mut lead = graph_lead.into_lead(LeadSource::Sync, Utc::now());
-        lead.page_id = Some(st.config.page_id.clone());
-        lead.form_name = form_name;
-        if let Err(e) = st.store.save_lead(lead).await {
-            return server_error(e);
-        }
-        added += 1;
     }
-    Json(SyncResponse { added }).into_response()
+    Json(SyncResponse { added, errors }).into_response()
 }

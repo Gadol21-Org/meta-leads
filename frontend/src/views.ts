@@ -8,13 +8,15 @@ export function listView(leads: LeadSummary[], config: AppConfig): string {
   if (!leads.length) {
     return `${banner}<p class="empty">No leads yet. New leads appear here and as notifications.</p>`;
   }
+  // Only name the Page when there is more than one to tell apart.
+  const multiPage = config.pages.length > 1;
   const rows = leads
     .map(
       (l) => `
       <li><a href="/leads/${encodeURIComponent(l.id)}" data-link class="lead-row">
         <div>
           <div class="lead-name">${esc(l.title)}</div>
-          <div class="muted small">${esc([l.form_name, l.campaign_name].filter(Boolean).join(" · ") || l.id)}</div>
+          <div class="muted small">${esc([multiPage ? l.page_name : null, l.form_name, l.campaign_name].filter(Boolean).join(" · ") || l.id)}</div>
         </div>
         <div class="right muted small">${esc(relTime(l.created_time))}</div>
       </a></li>`,
@@ -26,6 +28,7 @@ export function listView(leads: LeadSummary[], config: AppConfig): string {
 export function leadView(lead: Lead): string {
   const adRows: [string, string | undefined][] = [
     ["Received", fmtDate(lead.created_time)],
+    ["Page", lead.page_name ?? lead.page_id],
     ["Form", lead.form_name ?? lead.form_id],
     ["Campaign", lead.campaign_name ?? undefined],
     ["Ad set", lead.adset_name],

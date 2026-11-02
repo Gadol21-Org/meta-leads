@@ -134,6 +134,42 @@ Business Suite settings), call `<PAGE_ID>?fields=access_token&access_token=<LONG
    settings (Business Suite > Settings > Page > the number under the name).
 5. Continue with step 6 (subscribe the app to the Page) and 7 (`LEADS_ENV`).
 
+## Two or more Pages (e.g. a Facebook Page and an Instagram-linked Page)
+
+First, one fact about Instagram: leads from ads that run on Instagram are collected through the
+**Facebook Page** that the Instagram account is linked to. An Instagram profile has no leadgen webhook of
+its own. So if your Instagram account is linked to the same Facebook Page you already use, you have **one**
+Page and nothing extra to configure. You only need the steps below when your ads run from **two different
+Facebook Pages** (a Page "behind" each account). The notification and lead page then show which Page a lead
+came from.
+
+Do steps 4 (webhook) once for the app, then for **each** Page do the "subscribe the app to the Page" call
+(step 5.6) with that Page's token and `META_PAGE_ID`. Then give the app the tokens, in one of two ways:
+
+* **One token per Page** (simplest if you already have them): in `LEADS_ENV`
+
+  ```
+  META_PAGE_TOKENS=<PAGE_ID_1>:<PAGE_TOKEN_1>,<PAGE_ID_2>:<PAGE_TOKEN_2>
+  ```
+
+  (no spaces, a colon between id and token, a comma between Pages; use this *instead of* `META_PAGE_ID` and
+  `META_PAGE_ACCESS_TOKEN`, though those still work for one Page).
+* **One system-user token for all Pages** (recommended): create the system user as described below, assign
+  **both** Pages to it with Manage Page, generate one token (expiration Never), and put in `LEADS_ENV`
+
+  ```
+  META_USER_TOKEN=<SYSTEM_USER_TOKEN>
+  META_PAGE_IDS=<PAGE_ID_1>,<PAGE_ID_2>
+  ```
+
+  The app fetches each Page's own token from that one token when it starts, so adding a third Page later
+  is: assign it to the system user, add its id to `META_PAGE_IDS`, subscribe the app to it, redeploy.
+  (Leave `META_PAGE_IDS` empty to use every Page the system user can see.)
+
+Check the startup log (`docker logs meta-leads`): it prints one line per Page it will read leads from, and a
+warning if a Page has no token (usually: the system user isn't assigned to it with Manage Page).
+The ⋯ > Import existing leads action imports from every Page and reports any Page it could not read.
+
 ## 6. Testing, then real leads
 
 * Test now, in Development mode: [Lead Ads Testing Tool](https://developers.facebook.com/tools/lead-ads-testing),
