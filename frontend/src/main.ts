@@ -112,16 +112,25 @@ notifyBtn.addEventListener("click", async () => {
   }
 });
 
-$("#menu-btn").addEventListener("click", () => (menu.hidden = !menu.hidden));
+const menuBtn = $("#menu-btn");
+menuBtn.addEventListener("click", () => (menu.hidden = !menu.hidden));
+// While the menu is open, a tap anywhere else only closes it: it must not also activate what is underneath.
+document.addEventListener(
+  "click",
+  (e) => {
+    if (menu.hidden || !(e.target instanceof Node) || menu.contains(e.target) || menuBtn.contains(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    menu.hidden = true;
+  },
+  true,
+);
 menu.addEventListener("click", async (e) => {
   const action = e.target instanceof HTMLElement ? e.target.dataset.action : undefined;
   if (!action) return;
   menu.hidden = true;
   try {
-    if (action === "test-push") {
-      const { sent } = await api.sendTestPush();
-      toast(t.notifications.sentTo(sent));
-    } else if (action === "unsubscribe") {
+    if (action === "unsubscribe") {
       toast((await push.unsubscribe()) ? t.notifications.off : t.notifications.notSubscribed);
       await push.updateNotifyButton(notifyBtn, config);
     }

@@ -34,7 +34,6 @@ export const listLeads = () => request<{ leads: LeadSummary[] }>("/api/leads").t
 export const getLead = (id: string, refresh = false) =>
   request<{ lead: Lead }>(`/api/leads/${encodeURIComponent(id)}${refresh ? "?refresh=1" : ""}`).then((r) => r.lead);
 export const syncLeads = () => request<ImportReport>("/api/sync", { method: "POST" });
-export const sendTestPush = () => request<{ sent: number; failed: number }>("/api/test-notification", { method: "POST" });
 export const saveSubscription = (sub: PushSubscriptionJSON) =>
   request<{ ok: boolean }>("/api/subscriptions", { method: "POST", body: sub });
 export const deleteSubscription = (endpoint: string) =>
