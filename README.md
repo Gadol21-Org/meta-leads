@@ -19,19 +19,17 @@ Meta lead form ──webhook (leadgen)──▶ /webhook ──Graph API──�
                                      tap ──────────▶ /leads/<id> in the PWA
 ```
 
-* `src/server.js`: Express app with the Meta webhook, read-only API and the static PWA.
-* `src/meta.js`: webhook signature check, Graph API lead lookup, backfill import.
-* `src/push.js`: Web Push fan-out; expired subscriptions are removed automatically.
-* `src/store.js`: JSON file store (single instance). Swap for a database if you scale out.
-* `public/`: the PWA (`app.js`, service worker `sw.js`, manifest and icons).
+* `backend/` (Rust, axum): `app.rs` webhook + read-only API, `meta.rs` signature check and Graph API,
+  `push.rs` Web Push fan-out (expired subscriptions are removed automatically), `store.rs` JSON file store
+  (single instance; swap for a database if you scale out). The built frontend is embedded in the binary.
+* `frontend/` (TypeScript, Vite): the PWA. `public/sw.js` is the service worker (plain JS, as in budget-tracking).
 
 ## Setup
 
-1. **Install and configure**
+1. **Configure**
    ```sh
-   npm install
    cp .env.example .env
-   npm run vapid          # paste the two keys into .env
+   cargo run -p meta-leads-backend -- vapid     # paste the two keys into .env
    ```
    Fill in the `META_*` values (below).
 
@@ -50,30 +48,29 @@ Meta lead form ──webhook (leadgen)──▶ /webhook ──Graph API──�
      to send a test lead.
 
 3. **Deploy**: pushes to `main` deploy automatically, see [deploy/README.md](deploy/README.md).
-   To run it by hand (HTTPS is required for push and for Meta webhooks)
+   To run it locally (needs Rust and Node.js; HTTPS is required for push and for Meta webhooks):
    ```sh
-   node --env-file=.env src/index.js
+   cargo run -p meta-leads-backend       # builds the frontend too, serves on :3000
    ```
    or with Docker:
    `docker build -t meta-leads . && docker run --env-file .env -p 3000:3000 -v meta-leads-data:/data meta-leads`
 
-4. **On each phone**: open the site, sign in, tap **Enable notifications**.
+4. **On each phone**: open the site, tap **Enable notifications**.
    On iPhone (iOS 16.4+), first use Share > **Add to Home Screen**, open the
    app from the home screen, then enable notifications. Apple only allows web
    push for installed web apps.
 
 The ⋯ menu has **Import existing leads from Meta** (reads past leads from all
-the page's forms without notifying), **Send test notification**, and log out.
+the page's forms without notifying), and **Send test notification**.
 
 ## Local testing
 
 ```sh
-npm test
-META_APP_SECRET=... node scripts/simulate-lead.js http://localhost:3000
+cargo test                      # backend (fake Graph API and push service)
+cd frontend && npm test         # frontend
 ```
 
-`simulate-lead.js` posts a correctly signed fake webhook. Without a real lead
-id the Graph lookup fails, so the lead is shown with only its id and a Retry button.
+Without a real lead id the Graph lookup fails, so the lead is shown with only its id and a Retry button.
 
 ## Security notes
 

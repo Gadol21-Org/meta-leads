@@ -1,8 +1,8 @@
 // Service worker: shows push notifications, opens the lead page on tap,
 // and caches the app shell so the PWA opens instantly (and offline).
 
-const CACHE = 'meta-leads-v1';
-const SHELL = ['/', '/index.html', '/app.js', '/styles.css', '/manifest.webmanifest', '/icons/icon-192.png'];
+const CACHE = 'meta-leads-v2';
+const SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -23,17 +23,17 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== location.origin) return;
   if (url.pathname.startsWith('/api/') || url.pathname === '/webhook') return;
-  const isPage = event.request.mode === 'navigate';
-  event.respondWith(
+    event.respondWith(
     fetch(event.request)
       .then((res) => {
-        if (res.ok && SHELL.includes(url.pathname)) {
+        // Hashed build assets and the shell; lead data (/api/) never gets here.
+        if (res.ok) {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(event.request, copy));
         }
         return res;
       })
-      .catch(() => caches.match(isPage ? '/index.html' : event.request)),
+      .catch(() => caches.match(event.request).then((r) => r ?? caches.match('/'))),
   );
 });
 
