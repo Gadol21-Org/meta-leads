@@ -1,6 +1,8 @@
 import "./style.css";
 import * as api from "./api";
 import * as push from "./push";
+import { computeStats, parseRange } from "./stats";
+import { statsView } from "./stats-view";
 import { leadView, listView } from "./views";
 import { esc, importSummary } from "./format";
 import { enablePullToRefresh } from "./gestures";
@@ -35,6 +37,13 @@ function navigate(url: string): void {
   void route();
 }
 
+// Tapping a bar in a stats chart shows its value in the line above the chart.
+view.addEventListener("click", (e) => {
+  const tip = e.target instanceof Element ? e.target.closest<SVGElement>("[data-tip]")?.dataset.tip : undefined;
+  const readout = e.target instanceof Element ? e.target.closest(".card")?.querySelector(".readout") : null;
+  if (tip && readout) readout.textContent = tip;
+});
+
 document.addEventListener("click", (e) => {
   const a = e.target instanceof Element ? e.target.closest<HTMLAnchorElement>("a[data-link]") : null;
   if (a && a.origin === location.origin && !e.metaKey && !e.ctrlKey) {
@@ -54,7 +63,10 @@ async function route(quiet = false): Promise<boolean> {
   menu.hidden = true;
   const leadId = location.pathname.match(/^\/leads\/([^/]+)$/)?.[1];
   try {
-    if (leadId) await renderLead(decodeURIComponent(leadId), quiet);
+    if (location.pathname === "/stats") {
+      const days = parseRange(new URLSearchParams(location.search).get("days"));
+      view.innerHTML = statsView(computeStats(await api.listLeads(), days));
+    } else if (leadId) await renderLead(decodeURIComponent(leadId), quiet);
     else view.innerHTML = listView(await api.listLeads(), config);
     return true;
   } catch (err) {

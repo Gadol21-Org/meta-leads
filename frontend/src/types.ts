@@ -11,6 +11,9 @@ export interface LeadSummary {
   form_name?: string | null;
   campaign_name?: string | null;
   platform?: string | null;
+  /** The ad's name, or its id when the name is unknown. */
+  ad?: string | null;
+  is_organic?: boolean | null;
 }
 
 export interface Disclaimer {
@@ -28,7 +31,6 @@ export interface Lead extends LeadSummary {
   adset_id?: string;
   adset_name?: string;
   campaign_id?: string;
-  is_organic?: boolean;
   partner_name?: string;
   disclaimers?: Disclaimer[];
   fetch_error?: string;

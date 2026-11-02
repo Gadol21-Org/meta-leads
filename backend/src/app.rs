@@ -264,6 +264,9 @@ struct LeadSummary {
     form_name: Option<String>,
     campaign_name: Option<String>,
     platform: Option<String>,
+    /// The ad's name, or its id when the name is not known; for the stats page.
+    ad: Option<String>,
+    is_organic: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -452,6 +455,8 @@ async fn list_leads(State(st): State<Arc<AppState>>) -> Json<LeadsResponse> {
             form_name: l.form_name,
             campaign_name: l.campaign_name,
             platform: l.platform,
+            ad: l.ad_name.or(l.ad_id),
+            is_organic: l.is_organic,
         })
         .collect();
     Json(LeadsResponse { leads })

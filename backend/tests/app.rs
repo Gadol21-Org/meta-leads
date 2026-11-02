@@ -289,6 +289,10 @@ async fn api_serves_leads_and_is_read_only() {
     )
     .await;
     assert_eq!(list["leads"].as_array().unwrap().len(), 1);
+    // What the stats page needs: platform, an ad (name or id) and whether it was organic.
+    assert_eq!(list["leads"][0]["platform"], "ig");
+    assert_eq!(list["leads"][0]["is_organic"], false);
+    assert!(list["leads"][0].get("ad").is_some());
     let one = json_of(
         h.app
             .clone()
