@@ -670,6 +670,7 @@ async fn store_lead(h: &Harness, id: &str, age_days: i64) {
         meta_leads_backend::store::LeadSource::Webhook,
     );
     lead.form_id = Some("F1".into());
+    lead.received_at = created;
     lead.title = format!("old {id}");
     h.state.store.save_lead(lead).await.unwrap();
 }
@@ -804,4 +805,75 @@ async fn repeated_syncs_within_30_seconds_do_not_call_meta_again() {
     assert_eq!(first, second);
     assert_eq!(first["added"], 1);
     assert_eq!(meta.lock().unwrap().list_calls, 1);
+}
+
+/// Meta's dashboard "Test" button sends a made-up leadgen event: its form is not on the Page and
+/// its created_time is in 2020.
+async fn store_dashboard_sample(h: &Harness, id: &str) {
+    let mut lead = meta_leads_backend::store::Lead::bare(
+        id.into(),
+        chrono::Utc::now() - chrono::Duration::days(2000),
+        meta_leads_backend::store::LeadSource::Webhook,
+    );
+    lead.form_id = Some("44444444444".into());
+    lead.fetch_error = Some("Graph API: not found".into());
+    h.state.store.save_lead(lead).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_stored_lead_from_a_form_not_on_the_page_is_removed_when_meta_says_it_is_gone() {
+    let meta = Arc::new(Mutex::new(FakeMeta::default()));
+    {
+        let mut m = meta.lock().unwrap();
+        m.listed = vec![graph_lead("A", "Alice")];
+        m.lookups.insert("4444444444".into(), missing());
+        m.lookups.insert(
+            "5555".into(),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": {"message": "boom"}}),
+            ),
+        );
+    }
+    let h = import_harness(meta).await;
+    store_dashboard_sample(&h, "4444444444").await; // Meta: does not exist -> removed
+    store_dashboard_sample(&h, "5555").await; // the check failed -> kept
+    let (_, body) = run_import(&h).await;
+    assert_eq!(body["removed"], 1);
+    assert_eq!(body["unverified"], 1);
+    assert!(h.state.store.get_lead("4444444444").await.is_none());
+    assert!(h.state.store.get_lead("5555").await.is_some());
+}
+
+#[tokio::test]
+async fn leads_of_a_form_that_failed_to_read_are_never_treated_as_orphans() {
+    let meta = Arc::new(Mutex::new(FakeMeta::default()));
+    {
+        let mut m = meta.lock().unwrap();
+        m.list_fails = true;
+        m.lookups.insert("B".into(), missing());
+    }
+    let h = import_harness(meta).await;
+    store_lead(&h, "B", 1).await; // form F1, which the fake lists but cannot read
+    let (_, body) = run_import(&h).await;
+    assert_eq!(body["removed"], 0);
+    assert!(h.state.store.get_lead("B").await.is_some());
+}
+
+#[tokio::test]
+async fn a_long_run_of_orphans_is_not_removed() {
+    let meta = Arc::new(Mutex::new(FakeMeta::default()));
+    for i in 0..21 {
+        meta.lock()
+            .unwrap()
+            .lookups
+            .insert(format!("O{i}"), missing());
+    }
+    let h = import_harness(meta).await;
+    for i in 0..21 {
+        store_dashboard_sample(&h, &format!("O{i}")).await;
+    }
+    let (_, body) = run_import(&h).await;
+    assert_eq!(body["removed"], 0);
+    assert!(h.state.store.get_lead("O0").await.is_some());
 }

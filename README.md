@@ -59,8 +59,10 @@ nothing). The sync reads the leads of every form on the Page (up to 200 per form
 ones and refreshes stored ones. A stored lead is removed only when it is missing from that list and Meta also
 answers "does not exist" when asked for that one lead by id. Nothing is removed when a form could not be read
 completely (error, rate limit, or more than 200 leads), when the lead is older than 80 days (Meta stops
-serving old leads), when the lead's form is gone from the Page, when Meta lists nothing for a form but more than
-20 of its leads are stored, or when the check itself failed. Meta has no webhook for deleted leads, so a deletion
+serving old leads; for a lead that came by webhook this counts from when it arrived), when Meta lists nothing for a form
+but more than 20 of its leads are stored, or when the check itself failed. A stored lead whose form is not on the Page
+at all, such as the made-up sample Meta's dashboard Test button sends, gets the same check by id and is removed
+when Meta says it does not exist (at most 20 at once). Meta has no webhook for deleted leads, so a deletion
 shows up at the next pull. If Meta cannot be reached the old content stays and a message says why. Nothing is
 ever written to Meta. The server log has `import:` lines saying, per form, why leads were kept or removed.
 
