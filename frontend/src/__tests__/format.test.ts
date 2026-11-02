@@ -79,8 +79,9 @@ describe("views", () => {
 describe("importSummary", () => {
   it("reports changes and warns about what could not be checked", () => {
     expect(importSummary({ added: 1, refreshed: 4, removed: 2, skipped_forms: 0, unverified: 0 })).toBe(
-      "Synced with Meta: 1 lead added, 4 refreshed, 2 removed.",
+      "Synced with Meta: 1 lead added, 2 leads removed.",
     );
+    expect(importSummary({ added: 0, refreshed: 4, removed: 0, skipped_forms: 0, unverified: 0 })).toBe("Up to date with Meta.");
     const text = importSummary({ added: 0, refreshed: 0, removed: 0, skipped_forms: 2, unverified: 1 });
     expect(text).toContain("2 forms could not be fully read");
     expect(text).toContain("1 lead could not be verified");

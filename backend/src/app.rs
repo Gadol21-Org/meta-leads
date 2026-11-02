@@ -37,7 +37,14 @@ pub struct AppState {
     pub pusher: Pusher,
     /// Lead ids being processed right now, so a Meta retry can't notify twice.
     in_flight: Mutex<HashSet<String>>,
+    /// When the last successful sync finished and what it found. Holding this lock for the whole
+    /// sync serialises syncs from several devices; see `SYNC_MIN_INTERVAL`.
+    last_sync: Mutex<Option<(std::time::Instant, reconcile::Report)>>,
 }
+
+/// A sync asked for within this long of the previous one gets that one's result instead of
+/// calling Meta again, so repeated pulls (or several phones) can't hammer the Graph API.
+const SYNC_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl AppState {
     pub fn new(config: Config, store: Store) -> anyhow::Result<Arc<AppState>> {
@@ -57,6 +64,7 @@ impl AppState {
             graph,
             pusher,
             in_flight: Mutex::new(HashSet::new()),
+            last_sync: Mutex::new(None),
         }))
     }
 
@@ -477,7 +485,7 @@ async fn get_lead(
     Json(LeadResponse { lead }).into_response()
 }
 
-/// Import of existing leads from all of the page's forms, reconciled with Meta (no
+/// Sync with Meta: reads the leads of all of the page's forms and reconciles the cache (no
 /// notifications). Nothing is written to Meta.
 async fn sync(State(st): State<Arc<AppState>>) -> Response {
     if !st.graph.configured() || st.config.page_id.is_empty() {
@@ -485,6 +493,13 @@ async fn sync(State(st): State<Arc<AppState>>) -> Response {
             StatusCode::BAD_REQUEST,
             "Set META_PAGE_ID and META_PAGE_ACCESS_TOKEN first.",
         );
+    }
+    let mut last = st.last_sync.lock().await;
+    if let Some((at, report)) = last.as_ref() {
+        if at.elapsed() < SYNC_MIN_INTERVAL {
+            tracing::info!("sync: answered from the sync {:?} ago", at.elapsed());
+            return Json(report.clone()).into_response();
+        }
     }
     let started = std::time::Instant::now();
     tracing::info!(
@@ -494,6 +509,7 @@ async fn sync(State(st): State<Arc<AppState>>) -> Response {
     match reconcile::import(&st.graph, &st.store, &st.config.page_id, Utc::now()).await {
         Ok(report) => {
             tracing::info!("import: {report:?} in {:?}", started.elapsed());
+            *last = Some((std::time::Instant::now(), report.clone()));
             Json(report).into_response()
         }
         Err(e) => {

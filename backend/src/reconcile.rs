@@ -16,10 +16,12 @@ use crate::store::{Lead, LeadSource, Store};
 const SAFE_AGE: Duration = Duration::days(80);
 /// Leads read per form. A form with more is "incomplete" and is never used to remove anything.
 const MAX_PER_FORM: usize = 200;
+/// Most leads removed from a form Meta lists nothing for (see `import`).
+const MAX_REMOVALS_FROM_EMPTY_LIST: usize = 20;
 /// Individual existence checks per import, to bound the number of Graph calls.
 const MAX_CHECKS: usize = 100;
 
-#[derive(Debug, Default, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 pub struct Report {
     /// Leads Meta has that were not stored yet.
     pub added: usize,
@@ -81,17 +83,34 @@ pub async fn import(
             .await?;
         }
         if !form.complete {
+            tracing::info!(
+                "import: form {} has more than {MAX_PER_FORM} leads; not checking it for deletions",
+                form.form_id
+            );
             report.skipped_forms += 1;
             continue;
         }
-        // An empty list for a form we hold leads for is more likely a problem than a mass
-        // deletion, so nothing is removed on its strength.
-        if listed.is_empty() {
+        let stored = store.list_leads().await;
+        let listed: HashSet<&str> = listed.iter().map(String::as_str).collect();
+        let candidates = deletion_candidates(&stored, &form.form_id, &listed, now);
+        // An empty list can be the truth (the form's only leads were deleted), and each removal is
+        // still confirmed by Meta lead by lead. But a long run of "missing" leads against an empty
+        // list looks like a Meta-side problem, so then nothing is removed.
+        if listed.is_empty() && candidates.len() > MAX_REMOVALS_FROM_EMPTY_LIST {
+            tracing::warn!(
+                "import: Meta returned no leads for form {} but {} are stored; keeping them",
+                form.form_id,
+                candidates.len()
+            );
             continue;
         }
-        let listed: HashSet<&str> = listed.iter().map(String::as_str).collect();
-        let stored = store.list_leads().await;
-        for id in deletion_candidates(&stored, &form.form_id, &listed, now) {
+        tracing::info!(
+            "import: form {}: {} listed by Meta, {} stored leads to verify",
+            form.form_id,
+            listed.len(),
+            candidates.len()
+        );
+        for id in candidates {
             if checks_left == 0 {
                 report.unverified += 1;
                 continue;
@@ -99,6 +118,7 @@ pub async fn import(
             checks_left -= 1;
             match graph.lookup_lead(&id).await {
                 LeadLookup::Gone => {
+                    tracing::info!("import: removing lead {id}: Meta says it no longer exists");
                     store.remove_lead(&id).await?;
                     report.removed += 1;
                 }

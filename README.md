@@ -51,15 +51,18 @@ Meta lead form ──webhook (leadgen)──▶ /webhook ──Graph API──�
    app from the home screen, then enable notifications. Apple only allows web
    push for installed web apps.
 
-The ⋯ menu has **Sync with Meta** and **Send test notification**.
+The ⋯ menu has **Send test notification** and **Turn off notifications on this device**.
 
-Meta is the source of truth and the local file is a cache. **Sync with Meta** reads the leads of every form
-on the Page (up to 200 per form, without notifying), adds new ones and refreshes stored ones. A stored lead is
-removed only when it is missing from that list and Meta also answers "does not exist" when asked for that
-one lead by id. Nothing is removed when a form could not be read completely (error, rate limit, more than
-200 leads, or an empty list), when the lead is older than 80 days (Meta stops serving old leads), when the
-lead's form is gone from the Page, or when the check itself failed. Meta has no webhook for deleted leads,
-so a deletion shows up only at the next sync. Nothing is ever written to Meta.
+Meta is the source of truth and the local file is a cache. **Pull down to refresh** shows the stored leads at once,
+then syncs with Meta (a sync asked for within 30 seconds of the last one reuses its result, so pulling often costs
+nothing). The sync reads the leads of every form on the Page (up to 200 per form, without notifying), adds new
+ones and refreshes stored ones. A stored lead is removed only when it is missing from that list and Meta also
+answers "does not exist" when asked for that one lead by id. Nothing is removed when a form could not be read
+completely (error, rate limit, or more than 200 leads), when the lead is older than 80 days (Meta stops
+serving old leads), when the lead's form is gone from the Page, when Meta lists nothing for a form but more than
+20 of its leads are stored, or when the check itself failed. Meta has no webhook for deleted leads, so a deletion
+shows up at the next pull. If Meta cannot be reached the old content stays and a message says why. Nothing is
+ever written to Meta. The server log has `import:` lines saying, per form, why leads were kept or removed.
 
 ## Local testing
 

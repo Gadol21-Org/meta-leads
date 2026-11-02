@@ -13,10 +13,10 @@ export function listView(leads: LeadSummary[], config: AppConfig): string {
       (l) => `
       <li><a href="/leads/${encodeURIComponent(l.id)}" data-link class="lead-row">
         <div>
-          <div class="lead-name">${bidi(l.title)} ${platformBadge(l.platform)}</div>
+          <div class="lead-name">${bidi(l.title)}</div>
           <div class="muted small">${bidi([l.form_name, l.campaign_name].filter(Boolean).join(" · ") || l.id)}</div>
         </div>
-        <div class="date muted small">${bidi(relTime(l.created_time))}</div>
+        <div class="date muted small">${bidi(relTime(l.created_time))}${platformBadge(l.platform)}</div>
       </a></li>`,
     )
     .join("");

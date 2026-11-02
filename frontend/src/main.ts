@@ -71,7 +71,7 @@ async function renderLead(id: string, quiet = false): Promise<void> {
     });
   } catch (err) {
     if (err instanceof api.ApiError && err.status === 404) {
-      view.innerHTML = `<p class="empty">This lead isn't here yet. <a href="/" data-link>Back to leads</a></p>`;
+      view.innerHTML = `<p class="empty">This lead isn't here (it may have been removed in Meta). <a href="/" data-link>Back to leads</a></p>`;
       return;
     }
     throw err;
@@ -96,11 +96,7 @@ menu.addEventListener("click", async (e) => {
   if (!action) return;
   menu.hidden = true;
   try {
-    if (action === "sync") {
-      toast("Importing leads from Meta…", 10000);
-      toast(importSummary(await api.syncLeads()), 8000);
-      await route();
-    } else if (action === "test-push") {
+    if (action === "test-push") {
       const { sent } = await api.sendTestPush();
       toast(`Sent to ${sent} device${sent === 1 ? "" : "s"}.`);
     } else if (action === "unsubscribe") {
@@ -134,10 +130,22 @@ document.addEventListener("visibilitychange", onResume);
 window.addEventListener("pageshow", (e) => e.persisted && onResume());
 window.addEventListener("online", onResume);
 
-enablePullToRefresh(view, async () => {
+/** Pull to refresh: show the local data at once, then sync with Meta (the server answers repeated
+ * syncs within 30 seconds from the last one, so pulling often is cheap). A failure keeps what is on screen. */
+async function pullRefresh(): Promise<boolean> {
+  lastLoad = Date.now();
+  const shown = await route(true);
+  if (!config.metaConfigured) return shown;
+  try {
+    toast(importSummary(await api.syncLeads()), 6000);
+  } catch (err) {
+    toast(`Could not sync with Meta: ${errorMessage(err)}`, 6000);
+    return false;
+  }
   lastLoad = Date.now();
   return route(true);
-});
+}
+enablePullToRefresh(view, pullRefresh);
 
 // ---------- updates ----------
 
