@@ -1,6 +1,8 @@
 import "./style.css";
 import * as api from "./api";
 import * as push from "./push";
+import { computeStats, parseRange } from "./stats";
+import { statsView } from "./stats-view";
 import { leadView, listView } from "./views";
 import { esc, importSummary } from "./format";
 import { enablePullToRefresh } from "./gestures";
@@ -30,16 +32,28 @@ function toast(msg: string, ms = 3000): void {
 
 // ---------- routing ----------
 
-function navigate(url: string): void {
-  history.pushState({}, "", url);
+/** Pages the app opened itself carry `{ app: true }`, so "back" knows there is app history to return to. */
+function navigate(url: string, replace = false): void {
+  if (replace) history.replaceState(history.state, "", url);
+  else history.pushState({ app: true }, "", url);
   void route();
 }
+
+const hasAppHistory = (): boolean => (history.state as { app?: boolean } | null)?.app === true;
+
+// Tapping a bar in a stats chart shows its value in the line above the chart.
+view.addEventListener("click", (e) => {
+  const tip = e.target instanceof Element ? e.target.closest<SVGElement>("[data-tip]")?.dataset.tip : undefined;
+  const readout = e.target instanceof Element ? e.target.closest(".card")?.querySelector(".readout") : null;
+  if (tip && readout) readout.textContent = tip;
+});
 
 document.addEventListener("click", (e) => {
   const a = e.target instanceof Element ? e.target.closest<HTMLAnchorElement>("a[data-link]") : null;
   if (a && a.origin === location.origin && !e.metaKey && !e.ctrlKey) {
     e.preventDefault();
-    navigate(a.pathname + a.search);
+    if (a.hasAttribute("data-back") && hasAppHistory()) history.back();
+    else navigate(a.pathname + a.search, a.hasAttribute("data-replace"));
   }
 });
 // A long press on a lead row opens the browser's link menu (Android); the rows are tap targets only.
@@ -54,7 +68,10 @@ async function route(quiet = false): Promise<boolean> {
   menu.hidden = true;
   const leadId = location.pathname.match(/^\/leads\/([^/]+)$/)?.[1];
   try {
-    if (leadId) await renderLead(decodeURIComponent(leadId), quiet);
+    if (location.pathname === "/stats") {
+      const days = parseRange(new URLSearchParams(location.search).get("days"));
+      view.innerHTML = statsView(computeStats(await api.listLeads(), days));
+    } else if (leadId) await renderLead(decodeURIComponent(leadId), quiet);
     else view.innerHTML = listView(await api.listLeads(), config);
     return true;
   } catch (err) {
