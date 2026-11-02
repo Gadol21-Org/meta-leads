@@ -36,7 +36,6 @@ async function start(env = {}) {
     META_APP_SECRET: SECRET,
     META_VERIFY_TOKEN: 'verify-me',
     META_PAGE_ACCESS_TOKEN: 'token',
-    APP_PASSWORD: 'pw',
     ...env,
   });
   const store = await openStore(null);
@@ -120,30 +119,21 @@ test('lead is still stored with webhook data when Graph fetch fails', async () =
   s.close();
 });
 
-test('API requires login and is read-only', async () => {
+test('API serves leads and is read-only', async () => {
   const s = await start();
   await fetch(`${s.base}/webhook`, signed(webhookBody('111')));
   await waitFor(() => s.store.hasLead('111'));
 
-  assert.equal((await fetch(`${s.base}/api/leads`)).status, 401);
-  assert.equal(
-    (await fetch(`${s.base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"password":"x"}' })).status,
-    401,
-  );
-  const login = await fetch(`${s.base}/api/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: '{"password":"pw"}',
-  });
-  const cookie = login.headers.get('set-cookie').split(';')[0];
-
-  const { leads } = await (await fetch(`${s.base}/api/leads`, { headers: { cookie } })).json();
+  const { leads } = await (await fetch(`${s.base}/api/leads`)).json();
   assert.equal(leads.length, 1);
-  const { lead } = await (await fetch(`${s.base}/api/leads/111`, { headers: { cookie } })).json();
+  const { lead } = await (await fetch(`${s.base}/api/leads/111`)).json();
   assert.equal(lead.fields.find((f) => f.name === 'email').value, 'dana@example.com');
 
-  const write = await fetch(`${s.base}/api/leads/111/stage`, { method: 'POST', headers: { cookie } });
-  assert.equal(write.status, 404, 'no stage-change endpoint');
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const res = await fetch(`${s.base}/api/leads/111`, { method });
+    assert.equal(res.status, 404, `${method} on a lead is not supported`);
+  }
+  assert.equal((await fetch(`${s.base}/api/leads/111/stage`, { method: 'POST' })).status, 404);
   s.close();
 });
 

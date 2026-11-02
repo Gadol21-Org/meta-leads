@@ -7,11 +7,6 @@ export function loadConfig(env = process.env) {
     dataFile: env.DATA_FILE || 'data/db.json',
     publicUrl: (env.PUBLIC_URL || '').replace(/\/$/, ''),
 
-    // Access to the PWA itself. Leads are personal data, so the UI and API
-    // are behind a shared password. Leave empty only for local development.
-    appPassword: env.APP_PASSWORD || '',
-    sessionSecret: env.SESSION_SECRET || env.META_APP_SECRET || 'dev-insecure-secret',
-
     // Meta app + page
     meta: {
       graphVersion: env.META_GRAPH_VERSION || 'v21.0',

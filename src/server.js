@@ -1,7 +1,6 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createAuth } from './auth.js';
 import {
   createMetaClient,
   extractLeadgenEvents,
@@ -23,7 +22,6 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..',
 export function createApp({ config, store, fetchImpl, log = console }) {
   const meta = createMetaClient(config.meta, fetchImpl);
   const pusher = createPusher(config.vapid, store, log);
-  const auth = createAuth(config);
   const app = express();
   app.set('trust proxy', true);
 
@@ -136,17 +134,11 @@ export function createApp({ config, store, fetchImpl, log = console }) {
     }
   });
 
-  // ---------- auth ----------
+  // ---------- app API ----------
+  // No login here: everything except /webhook is expected to sit behind
+  // Cloudflare Access. /webhook is protected by Meta's request signature.
 
   app.use('/api', express.json({ limit: '100kb' }));
-  app.post('/api/login', (req, res) => auth.login(req, res));
-  app.post('/api/logout', (req, res) => auth.logout(req, res));
-  app.get('/api/session', (req, res) =>
-    res.json({ authed: auth.isAuthed(req), passwordRequired: auth.enabled }),
-  );
-  app.use('/api', (req, res, next) => auth.require(req, res, next));
-
-  // ---------- app API ----------
 
   app.get('/api/config', (_req, res) =>
     res.json({

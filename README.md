@@ -19,7 +19,7 @@ Meta lead form ──webhook (leadgen)──▶ /webhook ──Graph API──�
                                      tap ──────────▶ /leads/<id> in the PWA
 ```
 
-* `src/server.js`: Express app with the Meta webhook, login, read-only API and the static PWA.
+* `src/server.js`: Express app with the Meta webhook, read-only API and the static PWA.
 * `src/meta.js`: webhook signature check, Graph API lead lookup, backfill import.
 * `src/push.js`: Web Push fan-out; expired subscriptions are removed automatically.
 * `src/store.js`: JSON file store (single instance). Swap for a database if you scale out.
@@ -33,7 +33,7 @@ Meta lead form ──webhook (leadgen)──▶ /webhook ──Graph API──�
    cp .env.example .env
    npm run vapid          # paste the two keys into .env
    ```
-   Fill in `APP_PASSWORD`, `SESSION_SECRET` and the `META_*` values (below).
+   Fill in the `META_*` values (below).
 
 2. **Meta app** (developers.facebook.com)
    * Create a Business app and add the **Webhooks** product.
@@ -49,12 +49,13 @@ Meta lead form ──webhook (leadgen)──▶ /webhook ──Graph API──�
    * Use Meta's [Lead Ads Testing Tool](https://developers.facebook.com/tools/lead-ads-testing)
      to send a test lead.
 
-3. **Run** (HTTPS is required for push and for Meta webhooks)
+3. **Deploy**: pushes to `main` deploy automatically, see [deploy/README.md](deploy/README.md).
+   To run it by hand (HTTPS is required for push and for Meta webhooks)
    ```sh
    node --env-file=.env src/index.js
    ```
    or with Docker:
-   `docker build -t meta-leads . && docker run --env-file .env -p 3000:3000 -v $PWD/data:/app/data meta-leads`
+   `docker build -t meta-leads . && docker run --env-file .env -p 3000:3000 -v meta-leads-data:/data meta-leads`
 
 4. **On each phone**: open the site, sign in, tap **Enable notifications**.
    On iPhone (iOS 16.4+), first use Share > **Add to Home Screen**, open the
@@ -77,5 +78,14 @@ id the Graph lookup fails, so the lead is shown with only its id and a Retry but
 ## Security notes
 
 * Webhook POSTs are rejected unless `X-Hub-Signature-256` matches `META_APP_SECRET`.
-* The app and API are behind `APP_PASSWORD` (HttpOnly signed cookie, 180 days).
+* The app has no login of its own: put everything except `/webhook` behind Cloudflare Access (see `deploy/README.md`).
 * Lead data is never cached by the service worker; only the app shell is.
+
+## Which Meta credentials are needed
+
+| Credential | Needed for |
+|---|---|
+| `META_VERIFY_TOKEN` | Meta's one-time webhook handshake. You pick any string. **Required.** |
+| `META_APP_SECRET` | Checking the signature on every webhook POST. Without it every delivery is rejected. **Required.** |
+| `META_PAGE_ACCESS_TOKEN` | Reading the lead's contents. The webhook only carries ids, so without the token the notification and lead page show just an id. Also needed once to subscribe the app to the page. **Required for a useful app.** |
+| `META_PAGE_ID` | Optional: ignore webhooks for other pages and enable the import. |

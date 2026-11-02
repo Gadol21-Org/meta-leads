@@ -85,8 +85,6 @@ main { max-width: 720px; margin: 0 auto; padding: 16px; }
 .btn { font: inherit; padding: 10px 16px; border-radius: 10px; border: 1px solid var(--line); cursor: pointer; }
 .btn.primary { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
 .link { background: none; border: 0; color: var(--brand); font: inherit; text-decoration: underline; cursor: pointer; padding: 0; }
-.login { max-width: 360px; margin: 40px auto; display: grid; gap: 12px; }
-.login input { width: 100%; font: inherit; padding: 10px; margin-top: 4px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
 .toast {
   position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translateX(-50%);
   background: #111827; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px; max-width: calc(100% - 32px);

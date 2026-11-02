@@ -17,9 +17,9 @@ async function api(path, opts = {}) {
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const json = await res.json().catch(() => ({}));
-  if (res.status === 401 && path !== '/api/login') {
-    renderLogin();
-    throw Object.assign(new Error('login required'), { handled: true });
+  if (res.status === 401 || res.status === 403) {
+    // Cloudflare Access session expired: a reload sends us through its login.
+    throw Object.assign(new Error('Session expired. Reload the page to sign in again.'), { status: res.status });
   }
   if (!res.ok) throw Object.assign(new Error(json.error || `HTTP ${res.status}`), { status: res.status, body: json });
   return json;
@@ -86,29 +86,6 @@ async function route() {
 }
 
 // ---------- views ----------
-
-function renderLogin() {
-  $('#menu-btn').hidden = true;
-  $('#notify-btn').hidden = true;
-  view.innerHTML = `
-    <form class="card login" id="login-form">
-      <h1>Sign in</h1>
-      <label>Password <input type="password" name="password" autocomplete="current-password" required autofocus></label>
-      <button class="btn primary">Sign in</button>
-      <p class="error" hidden></p>
-    </form>`;
-  $('#login-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    try {
-      await api('/api/login', { method: 'POST', body: { password: e.target.password.value } });
-      await boot();
-    } catch (err) {
-      const p = $('.error', e.target);
-      p.textContent = err.message;
-      p.hidden = false;
-    }
-  });
-}
 
 async function renderList() {
   const { leads } = await api('/api/leads');
@@ -258,9 +235,6 @@ $('#menu').addEventListener('click', async (e) => {
       toast(`Sent to ${sent} device${sent === 1 ? '' : 's'}.`);
     } else if (action === 'unsubscribe') {
       await unsubscribe();
-    } else if (action === 'logout') {
-      await api('/api/logout', { method: 'POST' });
-      renderLogin();
     }
   } catch (err) {
     if (!err.handled) toast(err.message);
@@ -277,8 +251,6 @@ navigator.serviceWorker?.addEventListener('message', (e) => {
 // ---------- boot ----------
 
 async function boot() {
-  const session = await api('/api/session');
-  if (!session.authed) return renderLogin();
   config = await api('/api/config');
   $('#menu-btn').hidden = false;
   if ('serviceWorker' in navigator) {
