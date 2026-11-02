@@ -47,8 +47,6 @@ pub struct Lead {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub page_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ad_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ad_name: Option<String>,
@@ -86,7 +84,6 @@ impl Lead {
             form_id: None,
             form_name: None,
             page_id: None,
-            page_name: None,
             ad_id: None,
             ad_name: None,
             adset_id: None,

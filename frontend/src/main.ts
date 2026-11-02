@@ -92,9 +92,8 @@ menu.addEventListener("click", async (e) => {
   try {
     if (action === "sync") {
       toast("Importing leads from Meta…", 10000);
-      const { added, errors } = await api.syncLeads();
-      const failed = errors.length ? ` Could not read: ${errors.join("; ")}` : "";
-      toast(`Imported ${added} lead${added === 1 ? "" : "s"}.${failed}`, errors.length ? 10000 : 3000);
+      const { added } = await api.syncLeads();
+      toast(`Imported ${added} lead${added === 1 ? "" : "s"}.`);
       await route();
     } else if (action === "test-push") {
       const { sent } = await api.sendTestPush();

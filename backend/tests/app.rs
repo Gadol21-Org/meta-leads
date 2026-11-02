@@ -14,8 +14,8 @@ use axum::{
 };
 use hmac::{Hmac, Mac};
 use meta_leads_backend::{
-    app::{router, AppState},
-    config::{parse_page_tokens, Config, PageToken},
+    app::{router, AppState, SubscribeOutcome},
+    config::Config,
     push::{generate_vapid, Payload, Pusher},
     store::{Store, Subscription},
 };
@@ -36,95 +36,39 @@ async fn serve(app: Router) -> SocketAddr {
     addr
 }
 
-/// "id@token" of each Graph API call received.
-type Calls = Arc<Mutex<Vec<String>>>;
-
-/// A stand-in for graph.facebook.com. Page 5 ("Facebook Page", token5) owns lead 111 and
-/// page 6 ("Instagram Page", token6) owns lead 444; reading a lead with the wrong Page's
-/// token fails, as it does on Meta. The token "system" can read both Pages' details.
-async fn fake_graph(calls: Calls) -> String {
-    const PAGES: [(&str, &str, &str); 2] = [
-        ("5", "Facebook Page", "token5"),
-        ("6", "Instagram Page", "token6"),
-    ];
-
-    fn page_json(id: &str, name: &str, token: &str, caller: &str) -> Value {
-        if caller == "system" {
-            json!({"id": id, "name": name, "access_token": token})
-        } else {
-            json!({"id": id, "name": name})
-        }
-    }
-
-    fn wrong_token() -> (StatusCode, Json<Value>) {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": {"message": "(#190) wrong page token"}})),
-        )
-    }
-
+/// A stand-in for graph.facebook.com that knows lead 111 and form 900.
+async fn fake_graph(calls: Arc<Mutex<Vec<String>>>) -> String {
     async fn node(
-        State(calls): State<Calls>,
+        State(calls): State<Arc<Mutex<Vec<String>>>>,
         Path((_v, id)): Path<(String, String)>,
-        Query(q): Query<HashMap<String, String>>,
     ) -> (StatusCode, Json<Value>) {
-        let token = q.get("access_token").cloned().unwrap_or_default();
-        calls.lock().unwrap().push(format!("{id}@{token}"));
-        if let Some((pid, name, ptoken)) = PAGES.iter().find(|(pid, ..)| *pid == id) {
-            return match token.as_str() {
-                "system" => (StatusCode::OK, Json(page_json(pid, name, ptoken, &token))),
-                t if t == *ptoken => (StatusCode::OK, Json(page_json(pid, name, ptoken, &token))),
-                _ => wrong_token(),
-            };
-        }
-        let lead_page_token = match id.as_str() {
-            "111" => "token5",
-            "444" => "token6",
-            "900" => "",
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(json!({"error": {"message": "not found"}})),
-                )
-            }
-        };
-        if token.is_empty() || (!lead_page_token.is_empty() && token != lead_page_token) {
-            return wrong_token();
-        }
-        if id == "900" {
-            return (
+        calls.lock().unwrap().push(id.clone());
+        match id.as_str() {
+            "111" => (
+                StatusCode::OK,
+                Json(json!({
+                    "id": "111", "created_time": "2026-11-02T08:00:00+0000", "form_id": "900",
+                    "campaign_name": "Autumn promo", "platform": "ig", "is_organic": false,
+                    "field_data": [
+                        {"name": "full_name", "values": ["Dana Levi"]},
+                        {"name": "email", "values": ["dana@example.com"]},
+                        {"name": "phone_number", "values": ["+972501234567"]},
+                    ],
+                })),
+            ),
+            "900" => (
                 StatusCode::OK,
                 Json(json!({"id": "900", "name": "Contact form"})),
-            );
+            ),
+            _ => (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": {"message": "not found"}})),
+            ),
         }
-        let name = if id == "111" { "Dana Levi" } else { "Noa Bar" };
-        (
-            StatusCode::OK,
-            Json(json!({
-                "id": id, "created_time": "2026-11-02T08:00:00+0000", "form_id": "900",
-                "campaign_name": "Autumn promo", "platform": "ig", "is_organic": false,
-                "field_data": [
-                    {"name": "full_name", "values": [name]},
-                    {"name": "email", "values": ["dana@example.com"]},
-                    {"name": "phone_number", "values": ["+972501234567"]},
-                ],
-            })),
-        )
     }
-
-    async fn accounts(Query(q): Query<HashMap<String, String>>) -> (StatusCode, Json<Value>) {
-        if q.get("access_token").map(String::as_str) != Some("system") {
-            return wrong_token();
-        }
-        let data: Vec<Value> = PAGES
-            .iter()
-            .map(|(id, name, token)| page_json(id, name, token, "system"))
-            .collect();
-        (StatusCode::OK, Json(json!({ "data": data })))
-    }
-
+    // Page 5's token is "token"; anything else is refused, as Meta does for a bad token.
     async fn subscribe(
-        State(calls): State<Calls>,
+        State(calls): State<Arc<Mutex<Vec<String>>>>,
         Path((_v, id)): Path<(String, String)>,
         Query(q): Query<HashMap<String, String>>,
     ) -> (StatusCode, Json<Value>) {
@@ -134,17 +78,18 @@ async fn fake_graph(calls: Calls) -> String {
             .lock()
             .unwrap()
             .push(format!("POST {id}/subscribed_apps {fields}@{token}"));
-        match PAGES.iter().find(|(pid, ..)| *pid == id) {
-            Some((_, _, ptoken)) if *ptoken == token && fields == "leadgen" => {
-                (StatusCode::OK, Json(json!({"success": true})))
-            }
-            _ => wrong_token(),
+        if token == "token" && fields == "leadgen" {
+            (StatusCode::OK, Json(json!({"success": true})))
+        } else {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": {"message": "(#190) bad token"}})),
+            )
         }
     }
 
     let app = Router::new()
         .route("/:v/:id/subscribed_apps", post(subscribe))
-        .route("/:v/me/accounts", get(accounts))
         .route("/:v/:id", get(node))
         .with_state(calls);
     format!("http://{}", serve(app).await)
@@ -155,18 +100,8 @@ struct Harness {
     app: Router,
 }
 
-fn page_tokens() -> Vec<PageToken> {
-    [("5", "token5"), ("6", "token6")]
-        .into_iter()
-        .map(|(page_id, token)| PageToken {
-            page_id: page_id.into(),
-            token: token.into(),
-        })
-        .collect()
-}
-
 async fn harness(graph_root: &str, vapid: Option<(String, String)>) -> Harness {
-    harness_with(graph_root, vapid, |c| c.page_tokens = page_tokens()).await
+    harness_with(graph_root, vapid, |_| {}).await
 }
 
 async fn harness_with(
@@ -175,11 +110,11 @@ async fn harness_with(
     configure: impl FnOnce(&mut Config),
 ) -> Harness {
     // Not via environment variables: tests run in parallel and each has its own fake Graph API.
-    let mut config = Config::from_env().unwrap();
+    let mut config = Config::from_env();
     config.graph_base = format!("{graph_root}/v1");
     config.app_secret = SECRET.into();
     config.verify_token = "verify-me".into();
-    config.page_tokens = Vec::new();
+    config.page_access_token = "token".into();
     config.data_file = String::new();
     if let Some((public, private)) = vapid {
         config.vapid_public_key = public;
@@ -187,7 +122,6 @@ async fn harness_with(
     }
     configure(&mut config);
     let state = AppState::new(config, Store::open("").await.unwrap()).unwrap();
-    state.resolve_pages().await;
     Harness {
         app: router(state.clone()),
         state,
@@ -207,12 +141,8 @@ fn signed(body: &str) -> Request<Body> {
 }
 
 fn webhook_body(id: &str) -> String {
-    webhook_body_for(id, "5")
-}
-
-fn webhook_body_for(id: &str, page: &str) -> String {
-    json!({"object": "page", "entry": [{"id": page, "changes": [{"field": "leadgen",
-        "value": {"leadgen_id": id, "page_id": page, "form_id": "900", "created_time": 1793606400}}]}]})
+    json!({"object": "page", "entry": [{"id": "5", "changes": [{"field": "leadgen",
+        "value": {"leadgen_id": id, "page_id": "5", "form_id": "900", "created_time": 1793606400}}]}]})
     .to_string()
 }
 
@@ -314,17 +244,10 @@ async fn signed_webhook_stores_the_full_lead_once() {
     let labels: Vec<_> = lead.fields.iter().map(|f| f.label.as_str()).collect();
     assert_eq!(labels, ["Full name", "Email", "Phone number"]);
     assert_eq!(
-        calls
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|c| *c == "111@token5")
-            .count(),
+        calls.lock().unwrap().iter().filter(|c| *c == "111").count(),
         1,
-        "duplicate delivery is ignored, and the lead is read with its own Page's token"
+        "duplicate delivery is ignored"
     );
-    assert_eq!(lead.page_id.as_deref(), Some("5"));
-    assert_eq!(lead.page_name.as_deref(), Some("Facebook Page"));
 }
 
 #[tokio::test]
@@ -645,190 +568,30 @@ fn meta_helpers() {
     );
 }
 
-async fn ingest_via_webhook(h: &Harness, lead_id: &str, page: &str) {
-    let res = h
-        .app
-        .clone()
-        .oneshot(signed(&webhook_body_for(lead_id, page)))
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    wait_for_lead(&h.state, lead_id).await;
-}
-
 #[tokio::test]
-async fn each_page_reads_its_leads_with_its_own_token() {
-    let graph = fake_graph(Default::default()).await;
-    let h = harness(&graph, None).await;
-    ingest_via_webhook(&h, "111", "5").await;
-    ingest_via_webhook(&h, "444", "6").await;
-
-    let fb = h.state.store.get_lead("111").await.unwrap();
-    let ig = h.state.store.get_lead("444").await.unwrap();
-    assert_eq!(
-        (fb.title.as_str(), fb.page_name.as_deref()),
-        ("Dana Levi", Some("Facebook Page"))
-    );
-    assert_eq!(
-        (ig.title.as_str(), ig.page_name.as_deref()),
-        ("Noa Bar", Some("Instagram Page"))
-    );
-    assert!(fb.fetch_error.is_none() && ig.fetch_error.is_none());
-
-    let list = json_of(
-        h.app
-            .clone()
-            .oneshot(Request::get("/api/leads").body(Body::empty()).unwrap())
-            .await
-            .unwrap(),
-    )
-    .await;
-    let names: Vec<_> = list["leads"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|l| l["page_name"].as_str().unwrap().to_string())
-        .collect();
-    assert!(names.contains(&"Facebook Page".into()) && names.contains(&"Instagram Page".into()));
-
-    let config = json_of(
-        h.app
-            .clone()
-            .oneshot(Request::get("/api/config").body(Body::empty()).unwrap())
-            .await
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(config["metaConfigured"], true);
-    assert_eq!(config["pages"].as_array().unwrap().len(), 2);
-}
-
-#[tokio::test]
-async fn lead_from_an_unconfigured_page_is_kept_with_a_clear_error() {
-    let graph = fake_graph(Default::default()).await;
-    let h = harness(&graph, None).await;
-    ingest_via_webhook(&h, "777", "7").await;
-    let lead = h.state.store.get_lead("777").await.unwrap();
-    assert!(lead.fetch_error.unwrap().contains("Page 7"));
-    assert_eq!(lead.page_id.as_deref(), Some("7"));
-}
-
-#[tokio::test]
-async fn one_system_user_token_covers_several_pages() {
-    let graph = fake_graph(Default::default()).await;
-    // Explicit list of Pages...
-    let h = harness_with(&graph, None, |c| {
-        c.user_token = "system".into();
-        c.page_ids = vec!["5".into(), "6".into()];
-    })
-    .await;
-    ingest_via_webhook(&h, "111", "5").await;
-    ingest_via_webhook(&h, "444", "6").await;
-    assert_eq!(
-        h.state
-            .store
-            .get_lead("444")
-            .await
-            .unwrap()
-            .page_name
-            .as_deref(),
-        Some("Instagram Page")
-    );
-
-    // ...or every Page the token can list.
-    let h = harness_with(&graph, None, |c| c.user_token = "system".into()).await;
-    assert_eq!(h.state.pages.list().await.len(), 2);
-    ingest_via_webhook(&h, "111", "5").await;
-    assert!(h
-        .state
-        .store
-        .get_lead("111")
-        .await
-        .unwrap()
-        .fetch_error
-        .is_none());
-}
-
-#[tokio::test]
-async fn import_reads_every_page_and_reports_failures() {
-    let graph = fake_graph(Default::default()).await;
-    let h = harness(&graph, None).await;
-    // The fake has no leadgen_forms listing, so each Page's import fails; it must say which.
-    let res = h
-        .app
-        .clone()
-        .oneshot(Request::post("/api/sync").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = json_of(res).await;
-    assert_eq!(body["added"], 0);
-    assert_eq!(body["errors"].as_array().unwrap().len(), 2);
-
-    let none = harness_with(&graph, None, |_| {}).await;
-    let res = none
-        .app
-        .clone()
-        .oneshot(Request::post("/api/sync").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-}
-
-#[test]
-fn page_tokens_are_parsed_from_the_environment_format() {
-    let parsed = parse_page_tokens("111:aaa, 222:bbb ,").unwrap();
-    assert_eq!(
-        parsed,
-        [
-            PageToken {
-                page_id: "111".into(),
-                token: "aaa".into()
-            },
-            PageToken {
-                page_id: "222".into(),
-                token: "bbb".into()
-            }
-        ]
-    );
-    assert!(parse_page_tokens("").unwrap().is_empty());
-    assert!(parse_page_tokens("111").is_err());
-    assert!(parse_page_tokens("111:").is_err());
-}
-
-#[tokio::test]
-async fn every_page_is_subscribed_to_leadgen_and_failures_are_not_fatal() {
+async fn the_page_is_subscribed_to_leadgen_at_startup_and_failures_are_not_fatal() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let graph = fake_graph(calls.clone()).await;
-    let h = harness(&graph, None).await;
-    let outcomes = h.state.subscribe_pages().await;
-    assert_eq!(outcomes.len(), 2);
-    assert!(outcomes.iter().all(|(_, r)| r.is_ok()));
-    {
-        let calls = calls.lock().unwrap();
-        assert!(calls.contains(&"POST 5/subscribed_apps leadgen@token5".to_string()));
-        assert!(calls.contains(&"POST 6/subscribed_apps leadgen@token6".to_string()));
-    }
 
-    // A Page whose token Meta rejects is reported, the other Page still gets subscribed.
+    let h = harness_with(&graph, None, |c| c.page_id = "5".into()).await;
+    assert_eq!(h.state.subscribe_page().await, SubscribeOutcome::Subscribed);
+    assert!(calls
+        .lock()
+        .unwrap()
+        .contains(&"POST 5/subscribed_apps leadgen@token".to_string()));
+
+    // Meta refuses the token: reported, not a panic.
     let h = harness_with(&graph, None, |c| {
-        c.page_tokens = vec![
-            PageToken {
-                page_id: "5".into(),
-                token: "expired".into(),
-            },
-            PageToken {
-                page_id: "6".into(),
-                token: "token6".into(),
-            },
-        ]
+        c.page_id = "5".into();
+        c.page_access_token = "expired".into();
     })
     .await;
-    let outcomes = h.state.subscribe_pages().await;
-    let by_page: HashMap<_, _> = outcomes.into_iter().collect();
-    assert!(by_page["5"]
-        .as_ref()
-        .unwrap_err()
-        .contains("wrong page token"));
-    assert!(by_page["6"].is_ok());
+    match h.state.subscribe_page().await {
+        SubscribeOutcome::Failed(msg) => assert!(msg.contains("bad token")),
+        other => panic!("expected a failure, got {other:?}"),
+    }
+
+    // Without a Page id there is nothing to subscribe.
+    let h = harness(&graph, None).await;
+    assert_eq!(h.state.subscribe_page().await, SubscribeOutcome::Skipped);
 }

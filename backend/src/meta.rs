@@ -321,35 +321,28 @@ impl GraphLead {
 
 // ---------- Graph client ----------
 
-/// What the Graph API says about a Page. `access_token` is only present when
-/// the calling token may act as the Page.
-#[derive(Debug, Clone, Deserialize)]
-pub struct PageInfo {
-    #[serde(deserialize_with = "id_string")]
-    pub id: String,
-    pub name: Option<String>,
-    pub access_token: Option<String>,
-}
-
-/// Talks to the Graph API. It holds no credentials: every call takes the token to use,
-/// because each Page has its own.
 #[derive(Clone)]
 pub struct Graph {
     base: String,
+    token: String,
     http: reqwest::Client,
 }
 
 impl Graph {
-    pub fn new(base: &str, http: reqwest::Client) -> Graph {
+    pub fn new(base: &str, token: &str, http: reqwest::Client) -> Graph {
         Graph {
             base: base.to_string(),
+            token: token.to_string(),
             http,
         }
     }
 
+    pub fn configured(&self) -> bool {
+        !self.token.is_empty()
+    }
+
     async fn get<T: serde::de::DeserializeOwned>(
         &self,
-        token: &str,
         path: &str,
         params: &[(&str, &str)],
     ) -> anyhow::Result<T> {
@@ -358,7 +351,7 @@ impl Graph {
             self.http
                 .get(url)
                 .query(params)
-                .query(&[("access_token", token)]),
+                .query(&[("access_token", &self.token)]),
         )
         .await
     }
@@ -381,30 +374,13 @@ impl Graph {
             .map_err(|e| anyhow::anyhow!("Graph API: unexpected response: {e}"))
     }
 
-    /// Full lead record: every form answer plus ad/campaign context.
-    pub async fn fetch_lead(
-        &self,
-        page_token: &str,
-        leadgen_id: &str,
-    ) -> anyhow::Result<GraphLead> {
-        self.get(page_token, leadgen_id, &[("fields", LEAD_FIELDS)])
-            .await
-    }
-
-    pub async fn fetch_form_name(&self, page_token: &str, form_id: &str) -> Option<String> {
-        self.get::<GraphForm>(page_token, form_id, &[("fields", "id,name")])
-            .await
-            .ok()?
-            .name
-    }
-
-    /// Subscribes the app that issued `page_token` to the Page's `leadgen` webhook field.
+    /// Subscribes the app that issued the page token to the Page's `leadgen` webhook field.
     /// Idempotent: Meta answers success whether or not it was already subscribed.
-    pub async fn subscribe_leadgen(&self, page_token: &str, page_id: &str) -> anyhow::Result<()> {
+    pub async fn subscribe_leadgen(&self, page_id: &str) -> anyhow::Result<()> {
         let url = format!("{}/{page_id}/subscribed_apps", self.base);
         let req = self.http.post(url).query(&[
             ("subscribed_fields", "leadgen"),
-            ("access_token", page_token),
+            ("access_token", &self.token),
         ]);
         let res: SuccessResponse = self.send(req).await?;
         anyhow::ensure!(
@@ -414,22 +390,16 @@ impl Graph {
         Ok(())
     }
 
-    /// A Page's name and, if `token` is a user or system-user token that manages it, its own token.
-    pub async fn fetch_page(&self, token: &str, page_id: &str) -> anyhow::Result<PageInfo> {
-        self.get(token, page_id, &[("fields", "id,name,access_token")])
-            .await
+    /// Full lead record: every form answer plus ad/campaign context.
+    pub async fn fetch_lead(&self, leadgen_id: &str) -> anyhow::Result<GraphLead> {
+        self.get(leadgen_id, &[("fields", LEAD_FIELDS)]).await
     }
 
-    /// Every Page the token can list (`me/accounts`).
-    pub async fn list_pages(&self, user_token: &str) -> anyhow::Result<Vec<PageInfo>> {
-        let first: Page<PageInfo> = self
-            .get(
-                user_token,
-                "me/accounts",
-                &[("fields", "id,name,access_token"), ("limit", "100")],
-            )
-            .await?;
-        self.collect_pages(first, 1000).await
+    pub async fn fetch_form_name(&self, form_id: &str) -> Option<String> {
+        self.get::<GraphForm>(form_id, &[("fields", "id,name")])
+            .await
+            .ok()?
+            .name
     }
 
     /// Every page of a paginated list, following `paging.next` (which already carries the token).
@@ -452,16 +422,14 @@ impl Graph {
         Ok(items)
     }
 
-    /// Backfill: up to `max_per_form` leads from every form on the Page, newest first per form.
+    /// Backfill: up to `max_per_form` leads from every form on the page, newest first per form.
     pub async fn all_leads(
         &self,
-        page_token: &str,
         page_id: &str,
         max_per_form: usize,
     ) -> anyhow::Result<Vec<(GraphLead, Option<String>)>> {
         let forms: Page<GraphForm> = self
             .get(
-                page_token,
                 &format!("{page_id}/leadgen_forms"),
                 &[("fields", "id,name"), ("limit", "100")],
             )
@@ -470,7 +438,6 @@ impl Graph {
         for form in self.collect_pages(forms, 1000).await? {
             let first: Page<GraphLead> = self
                 .get(
-                    page_token,
                     &format!("{}/leads", form.id),
                     &[("fields", LEAD_FIELDS), ("limit", "100")],
                 )

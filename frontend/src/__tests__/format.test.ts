@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { esc, linkify, relTime, urlBase64ToUint8Array } from "../format";
 import { leadView, listView } from "../views";
-import { isWorkerMessage, type AppConfig, type Lead } from "../types";
+import { isWorkerMessage, type Lead } from "../types";
 
 describe("format", () => {
   it("escapes html", () => {
@@ -70,18 +70,8 @@ describe("views", () => {
   });
 
   it("links list rows to the lead page", () => {
-    const config: AppConfig = { metaConfigured: true, pushEnabled: true, vapidPublicKey: "k", pages: [] };
-    const html = listView([lead], config);
+    const html = listView([lead], { metaConfigured: true, pushEnabled: true, vapidPublicKey: "k" });
     expect(html).toContain('href="/leads/111"');
-    expect(listView([], { ...config, metaConfigured: false })).toContain("Meta page token");
-  });
-
-  it("names the Page in the list only when there are several", () => {
-    const withPage = { ...lead, page_name: "Instagram Page" };
-    const one: AppConfig = { metaConfigured: true, pushEnabled: true, vapidPublicKey: "k", pages: [{ id: "1", name: "A" }] };
-    const two: AppConfig = { ...one, pages: [...one.pages, { id: "2", name: "B" }] };
-    expect(listView([withPage], one)).not.toContain("Instagram Page");
-    expect(listView([withPage], two)).toContain("Instagram Page · Autumn promo");
-    expect(leadView(withPage)).toContain("Instagram Page");
+    expect(listView([], { metaConfigured: false, pushEnabled: false, vapidPublicKey: null })).toContain("Meta page token");
   });
 });

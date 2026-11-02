@@ -12,7 +12,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let config = Config::from_env()?;
+    let config = Config::from_env();
     for (missing, msg) in [
         (
             config.app_secret.is_empty(),
@@ -23,8 +23,8 @@ async fn main() -> anyhow::Result<()> {
             "META_VERIFY_TOKEN is empty: Meta's webhook handshake will fail.",
         ),
         (
-            config.page_tokens.is_empty() && config.user_token.is_empty(),
-            "No Page token configured (META_PAGE_TOKENS, META_PAGE_ID + META_PAGE_ACCESS_TOKEN or META_USER_TOKEN): leads will only have webhook ids.",
+            config.page_access_token.is_empty(),
+            "META_PAGE_ACCESS_TOKEN is empty: leads will only have webhook ids.",
         ),
         (
             config.vapid_public_key.is_empty(),
@@ -39,27 +39,11 @@ async fn main() -> anyhow::Result<()> {
     let store = Store::open(&config.data_file).await?;
     let addr = config.bind_addr.clone();
     let state = app::AppState::new(config, store)?;
-    state.resolve_pages().await;
-    for page in state.pages.list().await {
-        tracing::info!(
-            "reading leads from Page {} ({})",
-            page.id,
-            page.name.as_deref().unwrap_or("name unknown")
-        );
-    }
-    state.resolve_pages().await;
-    for page in state.pages.list().await {
-        tracing::info!(
-            "reading leads from Page {} ({})",
-            page.id,
-            page.name.as_deref().unwrap_or("name unknown")
-        );
-    }
     // In the background, so a slow Graph API can't delay startup.
     tokio::spawn({
         let state = state.clone();
         async move {
-            state.subscribe_pages().await;
+            state.subscribe_page().await;
         }
     });
     let listener = tokio::net::TcpListener::bind(&addr).await?;

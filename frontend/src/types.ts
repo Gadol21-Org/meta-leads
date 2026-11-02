@@ -8,7 +8,6 @@ export interface LeadSummary {
   id: string;
   title: string;
   created_time: string;
-  page_name?: string | null;
   form_name?: string | null;
   campaign_name?: string | null;
   platform?: string | null;
@@ -24,7 +23,6 @@ export type LeadSource = "webhook" | "sync";
 export interface Lead extends LeadSummary {
   fields: Field[];
   form_id?: string;
-  page_id?: string;
   ad_id?: string;
   ad_name?: string;
   adset_id?: string;
@@ -38,16 +36,10 @@ export interface Lead extends LeadSummary {
   received_at: string;
 }
 
-export interface PageInfo {
-  id: string;
-  name: string | null;
-}
-
 export interface AppConfig {
   vapidPublicKey: string | null;
   pushEnabled: boolean;
   metaConfigured: boolean;
-  pages: PageInfo[];
 }
 
 /** Messages the service worker posts to open pages. */
