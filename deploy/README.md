@@ -24,6 +24,8 @@ Pull requests build the image without pushing or deploying. Deploy by hand from
 
 ## One-time setup
 
+The full walkthrough, including how to get the Meta credentials, is in [SETUP-GUIDE.md](SETUP-GUIDE.md).
+
 Reuse the VM, Docker, deploy key and `cloudflared` tunnel from `budget-tracking`.
 
 1. **Tunnel hostname.** Add a public hostname to the tunnel, e.g. `leads.example.com`,

@@ -33,19 +33,10 @@ Meta lead form ──webhook (leadgen)──▶ /webhook ──Graph API──�
    ```
    Fill in the `META_*` values (below).
 
-2. **Meta app** (developers.facebook.com)
-   * Create a Business app and add the **Webhooks** product.
-   * Subscribe the **Page** object to the `leadgen` field with callback URL
-     `https://<your-host>/webhook` and the same verify token as `META_VERIFY_TOKEN`.
-   * Subscribe the app to your page:
-     `POST /{page-id}/subscribed_apps?subscribed_fields=leadgen` with a page token.
-   * Get a long-lived page access token (or a system-user token) with
-     `leads_retrieval`, `pages_manage_metadata`, `pages_show_list` and
-     `pages_read_engagement`, and put it in `META_PAGE_ACCESS_TOKEN`.
-   * In Meta Business Suite > Leads Access, make sure the app is allowed to
-     access leads for the page.
-   * Use Meta's [Lead Ads Testing Tool](https://developers.facebook.com/tools/lead-ads-testing)
-     to send a test lead.
+2. **Meta app, credentials and GitHub secrets**: follow the step-by-step
+   [deploy/SETUP-GUIDE.md](deploy/SETUP-GUIDE.md). In short: create a Business app, subscribe the Page object
+   to `leadgen` with callback `https://<your-host>/webhook`, generate a never-expiring page token, subscribe the
+   app to the page, and put everything in the `LEADS_ENV` secret.
 
 3. **Deploy**: pushes to `main` deploy automatically, see [deploy/README.md](deploy/README.md).
    To run it locally (needs Rust and Node.js; HTTPS is required for push and for Meta webhooks):
