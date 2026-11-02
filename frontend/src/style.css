@@ -71,13 +71,15 @@ main { max-width: 720px; margin: 0 auto; padding: 16px; }
 .lead-row { display: flex; justify-content: space-between; gap: 12px; padding: 14px 16px; color: inherit; text-decoration: none; }
 .lead-row:active { background: var(--bg); }
 .lead-name { font-weight: 600; overflow-wrap: anywhere; }
-.right { text-align: right; flex-shrink: 0; }
+.date { text-align: end; flex-shrink: 0; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 .error { color: var(--error); }
 .empty { text-align: center; color: var(--muted); padding: 40px 16px; }
 .banner { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
 .back { display: inline-block; margin-bottom: 12px; text-decoration: none; }
+.arrow { display: inline-block; }
+[dir=rtl] .arrow { transform: scaleX(-1); }
 .fields { display: grid; grid-template-columns: minmax(110px, 35%) 1fr; gap: 10px 14px; margin: 0; }
 .fields dt { color: var(--muted); font-size: 14px; }
 .fields dd { margin: 0; overflow-wrap: anywhere; }
@@ -111,3 +113,11 @@ body.gliding main[data-pull], body.gliding .ptr { transition: transform .3s cubi
 .ptr.spin .ptr-dot { animation: ptr-spin .8s linear infinite; }
 @keyframes ptr-spin { to { rotate: 360deg; } }
 @media (prefers-reduced-motion: reduce) { .ptr, main[data-pull] { transition: none !important; } }
+
+/* Platform badge */
+.badge {
+  display: inline-block; vertical-align: middle; margin-inline-start: 6px; padding: 1px 8px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; line-height: 1.5; color: #fff; background: #6b7280;
+}
+.badge.instagram { background: #c13584; }
+.badge.facebook { background: #1565c0; }
