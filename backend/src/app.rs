@@ -20,6 +20,15 @@ use crate::{
     store::{Lead, LeadSource, Store, Subscription},
 };
 
+/// What happened when the app tried to subscribe itself to the Page's `leadgen` field.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SubscribeOutcome {
+    /// Nothing to do: no Page id or no page token is configured.
+    Skipped,
+    Subscribed,
+    Failed(String),
+}
+
 pub struct AppState {
     pub config: Config,
     pub store: Store,
@@ -48,6 +57,29 @@ impl AppState {
             pusher,
             in_flight: Mutex::new(HashSet::new()),
         }))
+    }
+
+    /// Subscribes the app to the Page's `leadgen` field, so the Page never has to be subscribed by
+    /// hand. Meta treats a repeat subscription as a no-op, so this is safe on every start. The
+    /// result is logged and returned, never fatal.
+    pub async fn subscribe_page(&self) -> SubscribeOutcome {
+        let page_id = &self.config.page_id;
+        if page_id.is_empty() || !self.graph.configured() {
+            tracing::info!("not subscribing to leadgen: META_PAGE_ID and META_PAGE_ACCESS_TOKEN are both needed");
+            return SubscribeOutcome::Skipped;
+        }
+        match self.graph.subscribe_leadgen(page_id).await {
+            Ok(()) => {
+                tracing::info!("Page {page_id}: subscribed to leadgen webhooks");
+                SubscribeOutcome::Subscribed
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Page {page_id}: could not subscribe to leadgen webhooks ({e}); subscribe it by hand or give the token pages_manage_metadata"
+                );
+                SubscribeOutcome::Failed(e.to_string())
+            }
+        }
     }
 
     /// The lead as Meta describes it now, merged with what we already know

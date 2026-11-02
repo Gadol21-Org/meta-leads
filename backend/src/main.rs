@@ -39,6 +39,13 @@ async fn main() -> anyhow::Result<()> {
     let store = Store::open(&config.data_file).await?;
     let addr = config.bind_addr.clone();
     let state = app::AppState::new(config, store)?;
+    // In the background, so a slow Graph API can't delay startup.
+    tokio::spawn({
+        let state = state.clone();
+        async move {
+            state.subscribe_page().await;
+        }
+    });
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("meta-leads listening on {addr}");
     axum::serve(listener, app::router(state)).await?;

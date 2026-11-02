@@ -74,18 +74,22 @@ an empty 403 page (not a Cloudflare login page), which means Meta can reach it.
    **`META_PAGE_ACCESS_TOKEN`**. A page token obtained from a long-lived user token does not
    expire. Confirm in the [Access Token Debugger](https://developers.facebook.com/tools/debug/accesstoken/)
    (Expires: Never).
-4. Subscribe the app to the Page (without this, no leads are delivered):
-   ```
-   POST https://graph.facebook.com/v21.0/<PAGE_ID>/subscribed_apps
-        ?subscribed_fields=leadgen&access_token=<PAGE_TOKEN>
-   ```
-   It returns `{"success": true}`.
-5. Add both to the `LEADS_ENV` secret:
+4. Add both to the `LEADS_ENV` secret:
    ```
    META_PAGE_ID=<page id>
    META_PAGE_ACCESS_TOKEN=<page token>
    ```
    then re-run **Actions > Deploy > Run workflow** (the container only reads the settings at deploy).
+5. **Subscribing the app to the Page is automatic.** On every start, when both values above are set, the
+   app subscribes itself to the Page's `leadgen` field (Meta treats a repeat as a no-op) and logs
+   `Page <id>: subscribed to leadgen webhooks` in `docker logs meta-leads`, or a warning if Meta refused
+   (usually a token without `pages_manage_metadata`). Without this subscription no leads are delivered.
+   Doing it by hand is optional, for example to test the token before deploying:
+   ```
+   POST https://graph.facebook.com/v21.0/<PAGE_ID>/subscribed_apps
+        ?subscribed_fields=leadgen&access_token=<PAGE_TOKEN>
+   ```
+   It returns `{"success": true}`.
 
 Treat the app secret and page token like passwords. An alternative that avoids a personal user
 token is a **system user** (Business settings > Users > System users) with the Page assigned and a

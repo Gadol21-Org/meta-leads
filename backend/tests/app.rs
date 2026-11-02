@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
@@ -6,14 +7,14 @@ use std::{
 
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, Request, StatusCode},
     routing::{get, post},
     Json, Router,
 };
 use hmac::{Hmac, Mac};
 use meta_leads_backend::{
-    app::{router, AppState},
+    app::{router, AppState, SubscribeOutcome},
     config::Config,
     push::{generate_vapid, Payload, Pusher},
     store::{Store, Subscription},
@@ -65,7 +66,32 @@ async fn fake_graph(calls: Arc<Mutex<Vec<String>>>) -> String {
             ),
         }
     }
-    let app = Router::new().route("/:v/:id", get(node)).with_state(calls);
+    // Page 5's token is "token"; anything else is refused, as Meta does for a bad token.
+    async fn subscribe(
+        State(calls): State<Arc<Mutex<Vec<String>>>>,
+        Path((_v, id)): Path<(String, String)>,
+        Query(q): Query<HashMap<String, String>>,
+    ) -> (StatusCode, Json<Value>) {
+        let token = q.get("access_token").cloned().unwrap_or_default();
+        let fields = q.get("subscribed_fields").cloned().unwrap_or_default();
+        calls
+            .lock()
+            .unwrap()
+            .push(format!("POST {id}/subscribed_apps {fields}@{token}"));
+        if token == "token" && fields == "leadgen" {
+            (StatusCode::OK, Json(json!({"success": true})))
+        } else {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": {"message": "(#190) bad token"}})),
+            )
+        }
+    }
+
+    let app = Router::new()
+        .route("/:v/:id/subscribed_apps", post(subscribe))
+        .route("/:v/:id", get(node))
+        .with_state(calls);
     format!("http://{}", serve(app).await)
 }
 
@@ -75,9 +101,17 @@ struct Harness {
 }
 
 async fn harness(graph_root: &str, vapid: Option<(String, String)>) -> Harness {
-    std::env::set_var("META_GRAPH_BASE", graph_root);
-    std::env::set_var("META_GRAPH_VERSION", "v1");
+    harness_with(graph_root, vapid, |_| {}).await
+}
+
+async fn harness_with(
+    graph_root: &str,
+    vapid: Option<(String, String)>,
+    configure: impl FnOnce(&mut Config),
+) -> Harness {
+    // Not via environment variables: tests run in parallel and each has its own fake Graph API.
     let mut config = Config::from_env();
+    config.graph_base = format!("{graph_root}/v1");
     config.app_secret = SECRET.into();
     config.verify_token = "verify-me".into();
     config.page_access_token = "token".into();
@@ -86,6 +120,7 @@ async fn harness(graph_root: &str, vapid: Option<(String, String)>) -> Harness {
         config.vapid_public_key = public;
         config.vapid_private_key = private;
     }
+    configure(&mut config);
     let state = AppState::new(config, Store::open("").await.unwrap()).unwrap();
     Harness {
         app: router(state.clone()),
@@ -531,4 +566,32 @@ fn meta_helpers() {
             }
         ]
     );
+}
+
+#[tokio::test]
+async fn the_page_is_subscribed_to_leadgen_at_startup_and_failures_are_not_fatal() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let graph = fake_graph(calls.clone()).await;
+
+    let h = harness_with(&graph, None, |c| c.page_id = "5".into()).await;
+    assert_eq!(h.state.subscribe_page().await, SubscribeOutcome::Subscribed);
+    assert!(calls
+        .lock()
+        .unwrap()
+        .contains(&"POST 5/subscribed_apps leadgen@token".to_string()));
+
+    // Meta refuses the token: reported, not a panic.
+    let h = harness_with(&graph, None, |c| {
+        c.page_id = "5".into();
+        c.page_access_token = "expired".into();
+    })
+    .await;
+    match h.state.subscribe_page().await {
+        SubscribeOutcome::Failed(msg) => assert!(msg.contains("bad token")),
+        other => panic!("expected a failure, got {other:?}"),
+    }
+
+    // Without a Page id there is nothing to subscribe.
+    let h = harness(&graph, None).await;
+    assert_eq!(h.state.subscribe_page().await, SubscribeOutcome::Skipped);
 }

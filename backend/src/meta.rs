@@ -227,6 +227,11 @@ impl<T> Page<T> {
 }
 
 #[derive(Debug, Deserialize)]
+struct SuccessResponse {
+    success: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct GraphErrorEnvelope {
     error: GraphErrorBody,
 }
@@ -367,6 +372,22 @@ impl Graph {
         }
         serde_json::from_slice(&body)
             .map_err(|e| anyhow::anyhow!("Graph API: unexpected response: {e}"))
+    }
+
+    /// Subscribes the app that issued the page token to the Page's `leadgen` webhook field.
+    /// Idempotent: Meta answers success whether or not it was already subscribed.
+    pub async fn subscribe_leadgen(&self, page_id: &str) -> anyhow::Result<()> {
+        let url = format!("{}/{page_id}/subscribed_apps", self.base);
+        let req = self.http.post(url).query(&[
+            ("subscribed_fields", "leadgen"),
+            ("access_token", &self.token),
+        ]);
+        let res: SuccessResponse = self.send(req).await?;
+        anyhow::ensure!(
+            res.success,
+            "Graph API: subscribing the app to the Page was refused"
+        );
+        Ok(())
     }
 
     /// Full lead record: every form answer plus ad/campaign context.
