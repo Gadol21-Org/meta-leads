@@ -79,11 +79,15 @@ You get these from the [Graph API Explorer](https://developers.facebook.com/tool
 5. **Check the token works**:
    * Paste it into the [Access Token Debugger](https://developers.facebook.com/tools/debug/accesstoken/): it should show your app, **Expires: Never**, and `leads_retrieval` in the scopes.
    * `GET https://graph.facebook.com/v21.0/<PAGE_ID>/leadgen_forms?access_token=<PAGE_TOKEN>` should list your lead forms (an empty list is fine if you have none; an error means a missing permission).
-6. Subscribe the app to the Page (without this no leads are delivered):
+6. **Subscribing the app to the Page is automatic.** On every start the app subscribes itself to the
+   `leadgen` field of each configured Page (Meta treats a repeat as a no-op), and logs
+   `Page <name>: subscribed to leadgen webhooks` (or a warning if Meta refused, usually a missing
+   `pages_manage_metadata` permission). You can still do it by hand, for example to test the token before
+   deploying:
    ```
    POST https://graph.facebook.com/v21.0/<PAGE_ID>/subscribed_apps?subscribed_fields=leadgen&access_token=<PAGE_TOKEN>
    ```
-   It returns `{"success": true}`. (In the Explorer: set the method to POST and paste `<PAGE_ID>/subscribed_apps` with the field `subscribed_fields` = `leadgen`.) Confirm with `GET <PAGE_ID>/subscribed_apps`: your app should be listed with `leadgen`.
+   It returns `{"success": true}`; `GET <PAGE_ID>/subscribed_apps` lists the subscribed apps.
 7. Add both values to the `LEADS_ENV` secret:
    ```
    META_PAGE_ID=<page id>
@@ -132,7 +136,7 @@ Business Suite settings), call `<PAGE_ID>?fields=access_token&access_token=<LONG
    Use the returned `access_token` as `META_PAGE_ACCESS_TOKEN` (the system user token itself also works
    for reading leads, but the page token is what step 6 above expects). Your Page id is in the Page's
    settings (Business Suite > Settings > Page > the number under the name).
-5. Continue with step 6 (subscribe the app to the Page) and 7 (`LEADS_ENV`).
+5. Continue with step 7 (`LEADS_ENV`); the app subscribes itself to the Page.
 
 ## Two or more Pages (e.g. a Facebook Page and an Instagram-linked Page)
 
@@ -143,8 +147,8 @@ Page and nothing extra to configure. You only need the steps below when your ads
 Facebook Pages** (a Page "behind" each account). The notification and lead page then show which Page a lead
 came from.
 
-Do steps 4 (webhook) once for the app, then for **each** Page do the "subscribe the app to the Page" call
-(step 5.6) with that Page's token and `META_PAGE_ID`. Then give the app the tokens, in one of two ways:
+Do step 4 (webhook) once for the app. The app subscribes itself to every configured Page at startup, so
+you only need to give it the tokens, in one of two ways:
 
 * **One token per Page** (simplest if you already have them): in `LEADS_ENV`
 
@@ -163,11 +167,12 @@ Do steps 4 (webhook) once for the app, then for **each** Page do the "subscribe 
   ```
 
   The app fetches each Page's own token from that one token when it starts, so adding a third Page later
-  is: assign it to the system user, add its id to `META_PAGE_IDS`, subscribe the app to it, redeploy.
+  is: assign it to the system user, add its id to `META_PAGE_IDS`, redeploy.
   (Leave `META_PAGE_IDS` empty to use every Page the system user can see.)
 
-Check the startup log (`docker logs meta-leads`): it prints one line per Page it will read leads from, and a
-warning if a Page has no token (usually: the system user isn't assigned to it with Manage Page).
+Check the startup log (`docker logs meta-leads`): it prints one line per Page it will read leads from and
+whether the subscription worked, and a warning if a Page has no token (usually: the system user isn't
+assigned to it with Manage Page).
 The ⋯ > Import existing leads action imports from every Page and reports any Page it could not read.
 
 ## 6. Testing, then real leads

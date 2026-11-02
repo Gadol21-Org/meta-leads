@@ -59,6 +59,29 @@ impl AppState {
         self.pages.resolve(&self.graph, &self.config).await;
     }
 
+    /// Subscribes the app to the `leadgen` field of every configured Page, so a Page never has to
+    /// be subscribed by hand. Meta treats a repeat subscription as a no-op, so this is safe on every
+    /// start. Failures are returned per Page (and logged), never fatal.
+    pub async fn subscribe_pages(&self) -> Vec<(String, Result<(), String>)> {
+        let mut outcomes = Vec::new();
+        for page in self.pages.list().await {
+            let label = page.name.clone().unwrap_or_else(|| page.id.clone());
+            let outcome = self
+                .graph
+                .subscribe_leadgen(&page.token, &page.id)
+                .await
+                .map_err(|e| e.to_string());
+            match &outcome {
+                Ok(()) => tracing::info!("Page {label}: subscribed to leadgen webhooks"),
+                Err(e) => tracing::warn!(
+                    "Page {label}: could not subscribe to leadgen webhooks ({e}); subscribe it by hand or give the token pages_manage_metadata"
+                ),
+            }
+            outcomes.push((page.id, outcome));
+        }
+        outcomes
+    }
+
     /// The lead as Meta describes it now, read with the token of the Page it came from.
     async fn fetch_lead(
         &self,

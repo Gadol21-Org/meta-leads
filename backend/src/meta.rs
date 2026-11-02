@@ -227,6 +227,11 @@ impl<T> Page<T> {
 }
 
 #[derive(Debug, Deserialize)]
+struct SuccessResponse {
+    success: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct GraphErrorEnvelope {
     error: GraphErrorBody,
 }
@@ -391,6 +396,22 @@ impl Graph {
             .await
             .ok()?
             .name
+    }
+
+    /// Subscribes the app that issued `page_token` to the Page's `leadgen` webhook field.
+    /// Idempotent: Meta answers success whether or not it was already subscribed.
+    pub async fn subscribe_leadgen(&self, page_token: &str, page_id: &str) -> anyhow::Result<()> {
+        let url = format!("{}/{page_id}/subscribed_apps", self.base);
+        let req = self.http.post(url).query(&[
+            ("subscribed_fields", "leadgen"),
+            ("access_token", page_token),
+        ]);
+        let res: SuccessResponse = self.send(req).await?;
+        anyhow::ensure!(
+            res.success,
+            "Graph API: subscribing the app to the Page was refused"
+        );
+        Ok(())
     }
 
     /// A Page's name and, if `token` is a user or system-user token that manages it, its own token.

@@ -35,8 +35,8 @@ Meta lead form ──webhook (leadgen)──▶ /webhook ──Graph API──�
 
 2. **Meta app, credentials and GitHub secrets**: follow the step-by-step
    [deploy/SETUP-GUIDE.md](deploy/SETUP-GUIDE.md). In short: create a Business app, subscribe the Page object
-   to `leadgen` with callback `https://<your-host>/webhook`, generate a never-expiring page token, subscribe the
-   app to the page, and put everything in the `LEADS_ENV` secret.
+   to `leadgen` with callback `https://<your-host>/webhook`, generate a never-expiring page token, and put everything
+   in the `LEADS_ENV` secret. The app subscribes itself to each Page's `leadgen` field at startup.
 
 3. **Deploy**: pushes to `main` deploy automatically, see [deploy/README.md](deploy/README.md).
    To run it locally (needs Rust and Node.js; HTTPS is required for push and for Meta webhooks):
@@ -75,7 +75,7 @@ Without a real lead id the Graph lookup fails, so the lead is shown with only it
 |---|---|
 | `META_VERIFY_TOKEN` | Meta's one-time webhook handshake. You pick any string. **Required.** |
 | `META_APP_SECRET` | Checking the signature on every webhook POST. Without it every delivery is rejected. **Required.** |
-| `META_PAGE_ACCESS_TOKEN` (or one of the multi-Page options below) | Reading the lead's contents. The webhook only carries ids, so without the token the notification and lead page show just an id. Also needed once to subscribe the app to the page. **Required for a useful app.** |
+| `META_PAGE_ACCESS_TOKEN` (or one of the multi-Page options below) | Reading the lead's contents. The webhook only carries ids, so without the token the notification and lead page show just an id. Also used at startup to subscribe the app to the Page. **Required for a useful app.** |
 | `META_PAGE_ID` | The Page's id (used with `META_PAGE_ACCESS_TOKEN` for a single Page). |
 | `META_PAGE_TOKENS` | Several Pages, one token each: `pageId:token,pageId:token`. |
 | `META_USER_TOKEN` + `META_PAGE_IDS` | Several Pages with one system-user token; each Page's token is derived at startup. |

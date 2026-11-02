@@ -55,6 +55,13 @@ async fn main() -> anyhow::Result<()> {
             page.name.as_deref().unwrap_or("name unknown")
         );
     }
+    // In the background, so a slow Graph API can't delay startup.
+    tokio::spawn({
+        let state = state.clone();
+        async move {
+            state.subscribe_pages().await;
+        }
+    });
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("meta-leads listening on {addr}");
     axum::serve(listener, app::router(state)).await?;

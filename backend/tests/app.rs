@@ -123,7 +123,27 @@ async fn fake_graph(calls: Calls) -> String {
         (StatusCode::OK, Json(json!({ "data": data })))
     }
 
+    async fn subscribe(
+        State(calls): State<Calls>,
+        Path((_v, id)): Path<(String, String)>,
+        Query(q): Query<HashMap<String, String>>,
+    ) -> (StatusCode, Json<Value>) {
+        let token = q.get("access_token").cloned().unwrap_or_default();
+        let fields = q.get("subscribed_fields").cloned().unwrap_or_default();
+        calls
+            .lock()
+            .unwrap()
+            .push(format!("POST {id}/subscribed_apps {fields}@{token}"));
+        match PAGES.iter().find(|(pid, ..)| *pid == id) {
+            Some((_, _, ptoken)) if *ptoken == token && fields == "leadgen" => {
+                (StatusCode::OK, Json(json!({"success": true})))
+            }
+            _ => wrong_token(),
+        }
+    }
+
     let app = Router::new()
+        .route("/:v/:id/subscribed_apps", post(subscribe))
         .route("/:v/me/accounts", get(accounts))
         .route("/:v/:id", get(node))
         .with_state(calls);
@@ -774,4 +794,41 @@ fn page_tokens_are_parsed_from_the_environment_format() {
     assert!(parse_page_tokens("").unwrap().is_empty());
     assert!(parse_page_tokens("111").is_err());
     assert!(parse_page_tokens("111:").is_err());
+}
+
+#[tokio::test]
+async fn every_page_is_subscribed_to_leadgen_and_failures_are_not_fatal() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let graph = fake_graph(calls.clone()).await;
+    let h = harness(&graph, None).await;
+    let outcomes = h.state.subscribe_pages().await;
+    assert_eq!(outcomes.len(), 2);
+    assert!(outcomes.iter().all(|(_, r)| r.is_ok()));
+    {
+        let calls = calls.lock().unwrap();
+        assert!(calls.contains(&"POST 5/subscribed_apps leadgen@token5".to_string()));
+        assert!(calls.contains(&"POST 6/subscribed_apps leadgen@token6".to_string()));
+    }
+
+    // A Page whose token Meta rejects is reported, the other Page still gets subscribed.
+    let h = harness_with(&graph, None, |c| {
+        c.page_tokens = vec![
+            PageToken {
+                page_id: "5".into(),
+                token: "expired".into(),
+            },
+            PageToken {
+                page_id: "6".into(),
+                token: "token6".into(),
+            },
+        ]
+    })
+    .await;
+    let outcomes = h.state.subscribe_pages().await;
+    let by_page: HashMap<_, _> = outcomes.into_iter().collect();
+    assert!(by_page["5"]
+        .as_ref()
+        .unwrap_err()
+        .contains("wrong page token"));
+    assert!(by_page["6"].is_ok());
 }
