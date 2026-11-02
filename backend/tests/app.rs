@@ -605,6 +605,7 @@ struct FakeMeta {
     /// How many extra leads to list, each with a "next" link (simulates a list cut at the cap).
     more_pages: bool,
     list_fails: bool,
+    list_calls: usize,
     lookups: HashMap<String, (StatusCode, Value)>,
 }
 
@@ -613,7 +614,8 @@ async fn fake_meta(meta: Arc<Mutex<FakeMeta>>) -> String {
         Json(json!({"data": [{"id": "F1", "name": "Spring form"}]}))
     }
     async fn leads(State(m): State<Arc<Mutex<FakeMeta>>>) -> (StatusCode, Json<Value>) {
-        let m = m.lock().unwrap();
+        let mut m = m.lock().unwrap();
+        m.list_calls += 1;
         if m.list_fails {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -746,17 +748,34 @@ async fn a_failed_form_removes_nothing() {
 }
 
 #[tokio::test]
-async fn an_empty_or_truncated_list_removes_nothing() {
-    // Empty list: more likely a problem than every lead being deleted.
+async fn an_empty_list_removes_leads_meta_confirms_are_gone_but_not_a_long_run_of_them() {
     let meta = Arc::new(Mutex::new(FakeMeta::default()));
     meta.lock().unwrap().lookups.insert("B".into(), missing());
     let h = import_harness(meta).await;
-    store_lead(&h, "B", 1).await;
+    store_lead(&h, "B", 1).await; // the form's only lead was deleted in Meta
+    let (_, body) = run_import(&h).await;
+    assert_eq!(body["removed"], 1);
+    assert!(h.state.store.get_lead("B").await.is_none());
+
+    // 21 stored leads against an empty list looks like a Meta-side problem: nothing is removed.
+    let meta = Arc::new(Mutex::new(FakeMeta::default()));
+    for i in 0..21 {
+        meta.lock()
+            .unwrap()
+            .lookups
+            .insert(format!("L{i}"), missing());
+    }
+    let h = import_harness(meta).await;
+    for i in 0..21 {
+        store_lead(&h, &format!("L{i}"), 1).await;
+    }
     let (_, body) = run_import(&h).await;
     assert_eq!(body["removed"], 0);
-    assert!(h.state.store.get_lead("B").await.is_some());
+    assert!(h.state.store.get_lead("L0").await.is_some());
+}
 
-    // List cut at the 200-lead cap: a lead missing from it proves nothing.
+#[tokio::test]
+async fn a_list_cut_at_the_cap_removes_nothing() {
     let meta = Arc::new(Mutex::new(FakeMeta::default()));
     {
         let mut m = meta.lock().unwrap();
@@ -773,4 +792,16 @@ async fn an_empty_or_truncated_list_removes_nothing() {
     assert_eq!(body["removed"], 0);
     assert_eq!(body["skipped_forms"], 1);
     assert!(h.state.store.get_lead("B").await.is_some());
+}
+
+#[tokio::test]
+async fn repeated_syncs_within_30_seconds_do_not_call_meta_again() {
+    let meta = Arc::new(Mutex::new(FakeMeta::default()));
+    meta.lock().unwrap().listed = vec![graph_lead("A", "Alice")];
+    let h = import_harness(meta.clone()).await;
+    let (_, first) = run_import(&h).await;
+    let (_, second) = run_import(&h).await;
+    assert_eq!(first, second);
+    assert_eq!(first["added"], 1);
+    assert_eq!(meta.lock().unwrap().list_calls, 1);
 }

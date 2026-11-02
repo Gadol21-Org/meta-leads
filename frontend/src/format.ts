@@ -41,10 +41,12 @@ export function urlBase64ToUint8Array(base64: string): Uint8Array {
 
 const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-/** One toast line for an import: what changed, and what could not be checked. */
+/** One toast line for a sync: what changed, and what could not be checked. */
 export function importSummary(r: ImportReport): string {
-  const parts = [`${count(r.added, "lead")} added`, `${r.refreshed} refreshed`, `${r.removed} removed`];
-  let text = `Synced with Meta: ${parts.join(", ")}.`;
+  const changes = [r.added > 0 && `${count(r.added, "lead")} added`, r.removed > 0 && `${count(r.removed, "lead")} removed`].filter(
+    Boolean,
+  );
+  let text = changes.length ? `Synced with Meta: ${changes.join(", ")}.` : "Up to date with Meta.";
   if (r.skipped_forms > 0) text += ` ${count(r.skipped_forms, "form")} could not be fully read, so deletions were not checked there.`;
   if (r.unverified > 0) text += ` ${count(r.unverified, "lead")} could not be verified and were kept.`;
   return text;
