@@ -95,9 +95,7 @@ impl AppState {
     /// locally (form name, how and when it first arrived).
     async fn fetch_lead(&self, ev: &LeadgenEvent, source: LeadSource) -> anyhow::Result<Lead> {
         if !self.graph.configured() {
-            anyhow::bail!(
-                "META_PAGE_ACCESS_TOKEN לא הוגדר, ולכן זמינים רק הנתונים מה-webhook."
-            );
+            anyhow::bail!("META_PAGE_ACCESS_TOKEN לא הוגדר, ולכן זמינים רק הנתונים מה-webhook.");
         }
         let graph_lead = self.graph.fetch_lead(&ev.leadgen_id).await?;
         let mut lead = graph_lead.into_lead(source, ev.created_time.unwrap_or_else(Utc::now));

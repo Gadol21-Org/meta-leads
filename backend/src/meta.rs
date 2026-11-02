@@ -507,10 +507,7 @@ impl Graph {
             ("access_token", &self.token),
         ]);
         let res: SuccessResponse = self.send(req).await?;
-        anyhow::ensure!(
-            res.success,
-            "Graph API: החיבור של האפליקציה לעמוד נדחה"
-        );
+        anyhow::ensure!(res.success, "Graph API: החיבור של האפליקציה לעמוד נדחה");
         Ok(())
     }
 
