@@ -13,6 +13,13 @@ export interface LeadSummary {
   platform?: string | null;
 }
 
+export interface Disclaimer {
+  key: string;
+  checked: boolean;
+}
+
+export type LeadSource = "webhook" | "sync";
+
 export interface Lead extends LeadSummary {
   fields: Field[];
   form_id?: string;
@@ -23,9 +30,9 @@ export interface Lead extends LeadSummary {
   campaign_id?: string;
   is_organic?: boolean;
   partner_name?: string;
-  custom_disclaimer_responses?: { checkbox_key?: string; is_checked?: string | boolean }[];
+  disclaimers?: Disclaimer[];
   fetch_error?: string;
-  source: string;
+  source: LeadSource;
   received_at: string;
 }
 
@@ -33,4 +40,13 @@ export interface AppConfig {
   vapidPublicKey: string | null;
   pushEnabled: boolean;
   metaConfigured: boolean;
+}
+
+/** Messages the service worker posts to open pages. */
+export type WorkerMessage = { type: "open"; url: string } | { type: "new-lead"; leadId?: string };
+
+export function isWorkerMessage(data: unknown): data is WorkerMessage {
+  if (typeof data !== "object" || data === null) return false;
+  const m = data as Record<string, unknown>;
+  return (m.type === "open" && typeof m.url === "string") || m.type === "new-lead";
 }

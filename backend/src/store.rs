@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -15,11 +16,27 @@ pub struct Field {
     pub value: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// A custom disclaimer checkbox on the lead form.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Disclaimer {
+    pub key: String,
+    pub checked: bool,
+}
+
+/// How a lead reached us.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LeadSource {
+    #[default]
+    Webhook,
+    /// Read-only import of existing leads from the page's forms.
+    Sync,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Lead {
     pub id: String,
-    /// RFC 3339, always UTC, so string order is time order.
-    pub created_time: String,
+    pub created_time: DateTime<Utc>,
     pub title: String,
     #[serde(default)]
     pub fields: Vec<Field>,
@@ -48,12 +65,40 @@ pub struct Lead {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partner_name: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub custom_disclaimer_responses: Vec<serde_json::Value>,
+    pub disclaimers: Vec<Disclaimer>,
     /// Set when the Graph API lookup failed and only webhook data is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fetch_error: Option<String>,
-    pub source: String,
-    pub received_at: String,
+    pub source: LeadSource,
+    pub received_at: DateTime<Utc>,
+}
+
+impl Lead {
+    /// A lead built from webhook data alone, for when the Graph lookup fails.
+    pub fn bare(id: String, created_time: DateTime<Utc>, source: LeadSource) -> Lead {
+        Lead {
+            id,
+            created_time,
+            title: crate::meta::FALLBACK_TITLE.to_string(),
+            fields: Vec::new(),
+            form_id: None,
+            form_name: None,
+            page_id: None,
+            ad_id: None,
+            ad_name: None,
+            adset_id: None,
+            adset_name: None,
+            campaign_id: None,
+            campaign_name: None,
+            platform: None,
+            is_organic: None,
+            partner_name: None,
+            disclaimers: Vec::new(),
+            fetch_error: None,
+            source,
+            received_at: Utc::now(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -64,7 +109,7 @@ pub struct Subscription {
     #[serde(default)]
     pub user_agent: String,
     #[serde(default)]
-    pub added_at: String,
+    pub added_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -117,7 +162,7 @@ impl Store {
     pub async fn list_leads(&self) -> Vec<Lead> {
         let d = self.data.lock().await;
         let mut v: Vec<Lead> = d.leads.values().cloned().collect();
-        v.sort_by(|a, b| b.created_time.cmp(&a.created_time));
+        v.sort_by_key(|l| std::cmp::Reverse(l.created_time));
         v
     }
 
@@ -146,7 +191,7 @@ impl Store {
     }
 
     pub async fn add_subscription(&self, mut sub: Subscription) -> anyhow::Result<()> {
-        sub.added_at = chrono::Utc::now().to_rfc3339();
+        sub.added_at = Some(Utc::now());
         let mut d = self.data.lock().await;
         d.subscriptions.insert(sub.endpoint.clone(), sub);
         self.persist(&d).await

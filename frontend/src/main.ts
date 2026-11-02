@@ -3,20 +3,28 @@ import * as api from "./api";
 import * as push from "./push";
 import { leadView, listView } from "./views";
 import { esc } from "./format";
-import type { AppConfig } from "./types";
+import { isWorkerMessage, type AppConfig } from "./types";
 
-const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
+function $<T extends HTMLElement>(sel: string): T {
+  const el = document.querySelector<T>(sel);
+  if (!el) throw new Error(`missing element ${sel}`);
+  return el;
+}
 const view = $("#view");
 const menu = $("#menu");
 const notifyBtn = $<HTMLButtonElement>("#notify-btn");
 let config: AppConfig;
 
+const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+let toastTimer: number | undefined;
+
 function toast(msg: string, ms = 3000): void {
   const t = $("#toast");
   t.textContent = msg;
   t.hidden = false;
-  clearTimeout((toast as unknown as { timer?: number }).timer);
-  (toast as unknown as { timer?: number }).timer = window.setTimeout(() => (t.hidden = true), ms);
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => (t.hidden = true), ms);
 }
 
 // ---------- routing ----------
@@ -27,7 +35,7 @@ function navigate(url: string): void {
 }
 
 document.addEventListener("click", (e) => {
-  const a = (e.target as Element).closest<HTMLAnchorElement>("a[data-link]");
+  const a = e.target instanceof Element ? e.target.closest<HTMLAnchorElement>("a[data-link]") : null;
   if (a && a.origin === location.origin && !e.metaKey && !e.ctrlKey) {
     e.preventDefault();
     navigate(a.pathname + a.search);
@@ -37,12 +45,12 @@ window.addEventListener("popstate", () => void route());
 
 async function route(): Promise<void> {
   menu.hidden = true;
-  const m = location.pathname.match(/^\/leads\/([^/]+)$/);
+  const leadId = location.pathname.match(/^\/leads\/([^/]+)$/)?.[1];
   try {
-    if (m) await renderLead(decodeURIComponent(m[1]));
+    if (leadId) await renderLead(decodeURIComponent(leadId));
     else view.innerHTML = listView(await api.listLeads(), config);
   } catch (err) {
-    view.innerHTML = `<p class="empty">Something went wrong: ${esc((err as Error).message)}</p>`;
+    view.innerHTML = `<p class="empty">Something went wrong: ${esc(errorMessage(err))}</p>`;
   }
 }
 
@@ -56,7 +64,7 @@ async function renderLead(id: string): Promise<void> {
       await renderLead(id);
     });
   } catch (err) {
-    if ((err as api.ApiError).status === 404) {
+    if (err instanceof api.ApiError && err.status === 404) {
       view.innerHTML = `<p class="empty">This lead isn't here yet. <a href="/" data-link>Back to leads</a></p>`;
       return;
     }
@@ -72,13 +80,13 @@ notifyBtn.addEventListener("click", async () => {
     else toast("Notifications were not allowed.");
     await push.updateNotifyButton(notifyBtn, config);
   } catch (e) {
-    toast((e as Error).message);
+    toast(errorMessage(e));
   }
 });
 
 $("#menu-btn").addEventListener("click", () => (menu.hidden = !menu.hidden));
 menu.addEventListener("click", async (e) => {
-  const action = (e.target as HTMLElement).dataset.action;
+  const action = e.target instanceof HTMLElement ? e.target.dataset.action : undefined;
   if (!action) return;
   menu.hidden = true;
   try {
@@ -95,15 +103,16 @@ menu.addEventListener("click", async (e) => {
       await push.updateNotifyButton(notifyBtn, config);
     }
   } catch (err) {
-    toast((err as Error).message);
+    toast(errorMessage(err));
   }
 });
 
 // The service worker tells us to navigate when a notification is tapped while
 // the app is open, and when a new lead arrives.
-navigator.serviceWorker?.addEventListener("message", (e: MessageEvent) => {
-  if (e.data?.type === "open" && e.data.url) navigate(e.data.url);
-  if (e.data?.type === "new-lead" && location.pathname === "/") void route();
+navigator.serviceWorker?.addEventListener("message", (e: MessageEvent<unknown>) => {
+  if (!isWorkerMessage(e.data)) return;
+  if (e.data.type === "open") navigate(e.data.url);
+  else if (location.pathname === "/") void route();
 });
 
 document.addEventListener("visibilitychange", () => {
@@ -123,5 +132,5 @@ async function boot(): Promise<void> {
 }
 
 boot().catch((err) => {
-  view.innerHTML = `<p class="empty">Could not start: ${esc((err as Error).message)}</p>`;
+  view.innerHTML = `<p class="empty">Could not start: ${esc(errorMessage(err))}</p>`;
 });

@@ -1,14 +1,20 @@
 //! Everything that talks to Meta: webhook signature check, the Graph API lead
 //! lookup and the backfill import. Read-only: nothing here writes to Meta.
+//!
+//! Meta's JSON is parsed into typed structs at the edge, so the rest of the
+//! backend never touches untyped `serde_json::Value`s.
 
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use std::fmt;
+
+use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
-use serde::Deserialize;
-use serde_json::Value;
+use serde::{Deserialize, Deserializer};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
-use crate::store::{Field, Lead};
+use crate::store::{Disclaimer, Field, Lead, LeadSource};
+
+pub const FALLBACK_TITLE: &str = "New lead";
 
 const LEAD_FIELDS: &str = "id,created_time,field_data,ad_id,ad_name,adset_id,adset_name,\
 campaign_id,campaign_name,form_id,is_organic,platform,partner_name,custom_disclaimer_responses";
@@ -29,89 +35,212 @@ pub fn verify_signature(raw_body: &[u8], header: Option<&str>, app_secret: &str)
     mac.finalize().into_bytes().as_slice().ct_eq(&given).into()
 }
 
+/// Meta sends ids as strings, but sometimes as bare numbers.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+enum RawId {
+    Text(String),
+    Number(u64),
+}
+
+impl fmt::Display for RawId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RawId::Text(s) => f.write_str(s),
+            RawId::Number(n) => write!(f, "{n}"),
+        }
+    }
+}
+
+fn id_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    RawId::deserialize(d).map(|id| id.to_string())
+}
+
+fn opt_id_string<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(Option::<RawId>::deserialize(d)?.map(|id| id.to_string()))
+}
+
+// ---------- webhook payload ----------
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookPayload {
+    pub object: String,
+    #[serde(default)]
+    entry: Vec<WebhookEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebhookEntry {
+    #[serde(deserialize_with = "id_string")]
+    id: String,
+    #[serde(default)]
+    changes: Vec<WebhookChange>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebhookChange {
+    field: String,
+    /// Shape depends on `field`, so it is only parsed for `leadgen`.
+    value: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct LeadgenValue {
+    #[serde(deserialize_with = "id_string")]
+    leadgen_id: String,
+    #[serde(default, deserialize_with = "opt_id_string")]
+    page_id: Option<String>,
+    #[serde(default, deserialize_with = "opt_id_string")]
+    form_id: Option<String>,
+    #[serde(default, deserialize_with = "opt_id_string")]
+    ad_id: Option<String>,
+    #[serde(default, deserialize_with = "opt_id_string")]
+    adgroup_id: Option<String>,
+    /// Unix seconds.
+    created_time: Option<i64>,
+}
+
 /// A `leadgen` change from a page webhook payload.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LeadgenEvent {
     pub leadgen_id: String,
     pub page_id: String,
     pub form_id: Option<String>,
     pub ad_id: Option<String>,
     pub adgroup_id: Option<String>,
-    pub created_time: Option<i64>,
+    pub created_time: Option<DateTime<Utc>>,
 }
 
-fn as_string(v: &Value) -> Option<String> {
-    match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        _ => None,
+impl WebhookPayload {
+    /// The `leadgen` events in this payload; anything else is ignored.
+    pub fn leadgen_events(&self) -> Vec<LeadgenEvent> {
+        if self.object != "page" {
+            return Vec::new();
+        }
+        self.entry
+            .iter()
+            .flat_map(|entry| entry.changes.iter().map(move |c| (entry, c)))
+            .filter(|(_, change)| change.field == "leadgen")
+            .filter_map(|(entry, change)| {
+                let v: LeadgenValue = serde_json::from_value(change.value.clone()).ok()?;
+                Some(LeadgenEvent {
+                    leadgen_id: v.leadgen_id,
+                    page_id: v.page_id.unwrap_or_else(|| entry.id.clone()),
+                    form_id: v.form_id,
+                    ad_id: v.ad_id,
+                    adgroup_id: v.adgroup_id,
+                    created_time: v.created_time.and_then(|s| DateTime::from_timestamp(s, 0)),
+                })
+            })
+            .collect()
     }
 }
 
-pub fn extract_leadgen_events(payload: &Value) -> Vec<LeadgenEvent> {
-    let mut events = Vec::new();
-    if payload["object"] != "page" {
-        return events;
-    }
-    for entry in payload["entry"].as_array().into_iter().flatten() {
-        for change in entry["changes"].as_array().into_iter().flatten() {
-            let value = &change["value"];
-            if change["field"] != "leadgen" {
-                continue;
-            }
-            let Some(leadgen_id) = as_string(&value["leadgen_id"]) else {
-                continue;
-            };
-            events.push(LeadgenEvent {
-                leadgen_id,
-                page_id: as_string(&value["page_id"])
-                    .or_else(|| as_string(&entry["id"]))
-                    .unwrap_or_default(),
-                form_id: as_string(&value["form_id"]),
-                ad_id: as_string(&value["ad_id"]),
-                adgroup_id: as_string(&value["adgroup_id"]),
-                created_time: value["created_time"].as_i64(),
-            });
+// ---------- Graph API responses ----------
+
+/// Graph times look like `2026-11-02T08:00:00+0000` (no colon in the offset).
+fn graph_time<'de, D: Deserializer<'de>>(d: D) -> Result<Option<DateTime<Utc>>, D::Error> {
+    let Some(raw) = Option::<String>::deserialize(d)? else {
+        return Ok(None);
+    };
+    Ok(DateTime::parse_from_str(&raw, "%Y-%m-%dT%H:%M:%S%z")
+        .or_else(|_| DateTime::parse_from_rfc3339(&raw))
+        .ok()
+        .map(|t| t.with_timezone(&Utc)))
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphField {
+    name: String,
+    #[serde(default)]
+    values: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphDisclaimer {
+    checkbox_key: Option<String>,
+    is_checked: Option<CheckedFlag>,
+}
+
+/// The API sends `"1"` or `true` depending on the field.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum CheckedFlag {
+    Bool(bool),
+    Text(String),
+}
+
+impl CheckedFlag {
+    fn is_checked(&self) -> bool {
+        match self {
+            CheckedFlag::Bool(b) => *b,
+            CheckedFlag::Text(s) => s == "1" || s.eq_ignore_ascii_case("true"),
         }
     }
-    events
 }
 
-/// Webhook times are unix seconds, Graph API times are ISO strings
-/// (`2026-11-02T08:00:00+0000`). Always returns RFC 3339 in UTC.
-pub fn normalise_time(raw: &Value) -> String {
-    let parsed: Option<DateTime<Utc>> = match raw {
-        Value::Number(n) => n.as_i64().and_then(|s| Utc.timestamp_opt(s, 0).single()),
-        Value::String(s) => DateTime::parse_from_rfc3339(s)
-            .ok()
-            .map(|d| d.with_timezone(&Utc))
-            .or_else(|| {
-                DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%z")
-                    .ok()
-                    .map(|d| d.with_timezone(&Utc))
-            })
-            .or_else(|| {
-                s.parse::<i64>()
-                    .ok()
-                    .and_then(|n| Utc.timestamp_opt(n, 0).single())
-            })
-            .or_else(|| {
-                NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
-                    .ok()
-                    .map(|n| n.and_utc())
-            }),
-        _ => None,
-    };
-    parsed
-        .unwrap_or_else(Utc::now)
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+#[derive(Debug, Deserialize)]
+pub struct GraphLead {
+    #[serde(deserialize_with = "id_string")]
+    pub id: String,
+    #[serde(default, deserialize_with = "graph_time")]
+    created_time: Option<DateTime<Utc>>,
+    #[serde(default)]
+    field_data: Vec<GraphField>,
+    form_id: Option<String>,
+    ad_id: Option<String>,
+    ad_name: Option<String>,
+    adset_id: Option<String>,
+    adset_name: Option<String>,
+    campaign_id: Option<String>,
+    campaign_name: Option<String>,
+    platform: Option<String>,
+    is_organic: Option<bool>,
+    partner_name: Option<String>,
+    #[serde(default)]
+    custom_disclaimer_responses: Vec<GraphDisclaimer>,
 }
+
+#[derive(Debug, Deserialize)]
+struct GraphForm {
+    #[serde(deserialize_with = "id_string")]
+    id: String,
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Paging {
+    next: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Page<T> {
+    #[serde(default = "Vec::new")]
+    data: Vec<T>,
+    paging: Option<Paging>,
+}
+
+impl<T> Page<T> {
+    fn next_url(&self) -> Option<&str> {
+        self.paging.as_ref()?.next.as_deref()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphErrorEnvelope {
+    error: GraphErrorBody,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphErrorBody {
+    message: Option<String>,
+}
+
+// ---------- normalising ----------
 
 fn humanise(name: &str) -> String {
-    let spaced: String = name
-        .chars()
-        .map(|c| if c == '_' || c == '-' { ' ' } else { c })
-        .collect::<String>()
+    let spaced = name
+        .replace(['_', '-'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
@@ -120,30 +249,6 @@ fn humanise(name: &str) -> String {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
     }
-}
-
-/// Turns Graph API `field_data` into a flat, display-friendly list.
-pub fn normalise_fields(field_data: &Value) -> Vec<Field> {
-    field_data
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|f| {
-            let name = f["name"].as_str()?.to_string();
-            let value = f["values"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            Some(Field {
-                label: humanise(&name),
-                name,
-                value,
-            })
-        })
-        .collect()
 }
 
 /// A short "who is this" line for notifications and the list view.
@@ -155,68 +260,67 @@ pub fn lead_title(fields: &[Field]) -> String {
             .map(|f| f.value.clone())
             .unwrap_or_default()
     };
-    let mut name = get(&["full_name", "name"]);
-    if name.is_empty() {
-        name = [get(&["first_name"]), get(&["last_name"])]
+    let full_name = [get(&["first_name"]), get(&["last_name"])]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    [
+        get(&["full_name", "name"]),
+        full_name,
+        get(&["email"]),
+        get(&["phone_number", "phone"]),
+    ]
+    .into_iter()
+    .find(|s| !s.is_empty())
+    .unwrap_or_else(|| FALLBACK_TITLE.to_string())
+}
+
+impl GraphLead {
+    /// Builds a stored lead, using `fallback_time` if Meta sent no usable time.
+    pub fn into_lead(self, source: LeadSource, fallback_time: DateTime<Utc>) -> Lead {
+        let fields: Vec<Field> = self
+            .field_data
             .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
-    }
-    for fallback in [name, get(&["email"]), get(&["phone_number", "phone"])] {
-        if !fallback.is_empty() {
-            return fallback;
+            .map(|f| Field {
+                label: humanise(&f.name),
+                value: f.values.join(", "),
+                name: f.name,
+            })
+            .collect();
+        Lead {
+            title: lead_title(&fields),
+            fields,
+            form_id: self.form_id,
+            ad_id: self.ad_id,
+            ad_name: self.ad_name,
+            adset_id: self.adset_id,
+            adset_name: self.adset_name,
+            campaign_id: self.campaign_id,
+            campaign_name: self.campaign_name,
+            platform: self.platform,
+            is_organic: self.is_organic,
+            partner_name: self.partner_name,
+            disclaimers: self
+                .custom_disclaimer_responses
+                .into_iter()
+                .map(|d| Disclaimer {
+                    key: d.checkbox_key.unwrap_or_default(),
+                    checked: d.is_checked.is_some_and(|c| c.is_checked()),
+                })
+                .collect(),
+            ..Lead::bare(self.id, self.created_time.unwrap_or(fallback_time), source)
         }
     }
-    "New lead".to_string()
 }
 
-fn opt(v: &Value) -> Option<String> {
-    as_string(v).filter(|s| !s.is_empty())
-}
-
-/// Builds a stored lead from a Graph API lead object.
-pub fn lead_from_graph(g: &Value, source: &str) -> Lead {
-    let fields = normalise_fields(&g["field_data"]);
-    Lead {
-        id: as_string(&g["id"]).unwrap_or_default(),
-        created_time: normalise_time(&g["created_time"]),
-        title: lead_title(&fields),
-        fields,
-        form_id: opt(&g["form_id"]),
-        ad_id: opt(&g["ad_id"]),
-        ad_name: opt(&g["ad_name"]),
-        adset_id: opt(&g["adset_id"]),
-        adset_name: opt(&g["adset_name"]),
-        campaign_id: opt(&g["campaign_id"]),
-        campaign_name: opt(&g["campaign_name"]),
-        platform: opt(&g["platform"]),
-        is_organic: g["is_organic"].as_bool(),
-        partner_name: opt(&g["partner_name"]),
-        custom_disclaimer_responses: g["custom_disclaimer_responses"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default(),
-        source: source.to_string(),
-        received_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        ..Lead::default()
-    }
-}
+// ---------- Graph client ----------
 
 #[derive(Clone)]
 pub struct Graph {
     base: String,
     token: String,
     http: reqwest::Client,
-}
-
-#[derive(Deserialize)]
-struct GraphError {
-    error: Option<GraphErrorBody>,
-}
-#[derive(Deserialize)]
-struct GraphErrorBody {
-    message: Option<String>,
 }
 
 impl Graph {
@@ -232,7 +336,11 @@ impl Graph {
         !self.token.is_empty()
     }
 
-    async fn get(&self, path: &str, params: &[(&str, &str)]) -> anyhow::Result<Value> {
+    async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        params: &[(&str, &str)],
+    ) -> anyhow::Result<T> {
         let url = format!("{}/{}", self.base, path);
         self.send(
             self.http
@@ -243,84 +351,78 @@ impl Graph {
         .await
     }
 
-    async fn send(&self, req: reqwest::RequestBuilder) -> anyhow::Result<Value> {
+    async fn send<T: serde::de::DeserializeOwned>(
+        &self,
+        req: reqwest::RequestBuilder,
+    ) -> anyhow::Result<T> {
         let res = req.send().await?;
         let status = res.status();
-        let body: Value = res.json().await.unwrap_or(Value::Null);
-        if !status.is_success() || body.get("error").is_some() {
-            let msg = serde_json::from_value::<GraphError>(body)
+        let body = res.bytes().await?;
+        if !status.is_success() {
+            let msg = serde_json::from_slice::<GraphErrorEnvelope>(&body)
                 .ok()
-                .and_then(|e| e.error)
-                .and_then(|e| e.message)
+                .and_then(|e| e.error.message)
                 .unwrap_or_else(|| format!("HTTP {status}"));
             anyhow::bail!("Graph API: {msg}");
         }
-        Ok(body)
+        serde_json::from_slice(&body)
+            .map_err(|e| anyhow::anyhow!("Graph API: unexpected response: {e}"))
     }
 
     /// Full lead record: every form answer plus ad/campaign context.
-    pub async fn fetch_lead(&self, leadgen_id: &str) -> anyhow::Result<Value> {
+    pub async fn fetch_lead(&self, leadgen_id: &str) -> anyhow::Result<GraphLead> {
         self.get(leadgen_id, &[("fields", LEAD_FIELDS)]).await
     }
 
     pub async fn fetch_form_name(&self, form_id: &str) -> Option<String> {
-        let v = self.get(form_id, &[("fields", "id,name")]).await.ok()?;
-        v["name"].as_str().map(str::to_string)
+        self.get::<GraphForm>(form_id, &[("fields", "id,name")])
+            .await
+            .ok()?
+            .name
     }
 
-    /// Follows `paging.next` links (which already carry the access token).
-    async fn next_page(&self, page: &Value) -> anyhow::Result<Option<Value>> {
-        match page["paging"]["next"].as_str() {
-            Some(url) => Ok(Some(self.send(self.http.get(url)).await?)),
-            None => Ok(None),
+    /// Every page of a paginated list, following `paging.next` (which already carries the token).
+    async fn collect_pages<T: serde::de::DeserializeOwned>(
+        &self,
+        first: Page<T>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<T>> {
+        let mut items = Vec::new();
+        let mut page = first;
+        loop {
+            let next = page.next_url().map(str::to_string);
+            items.extend(page.data);
+            match next {
+                Some(url) if items.len() < limit => page = self.send(self.http.get(url)).await?,
+                _ => break,
+            }
         }
+        items.truncate(limit);
+        Ok(items)
     }
 
-    /// Backfill: every lead of every form on the page, newest first per form.
+    /// Backfill: up to `max_per_form` leads from every form on the page, newest first per form.
     pub async fn all_leads(
         &self,
         page_id: &str,
         max_per_form: usize,
-    ) -> anyhow::Result<Vec<(Value, Option<String>)>> {
-        let mut forms = self
+    ) -> anyhow::Result<Vec<(GraphLead, Option<String>)>> {
+        let forms: Page<GraphForm> = self
             .get(
                 &format!("{page_id}/leadgen_forms"),
                 &[("fields", "id,name"), ("limit", "100")],
             )
             .await?;
-        let mut all_forms: Vec<Value> = Vec::new();
-        loop {
-            all_forms.extend(forms["data"].as_array().cloned().unwrap_or_default());
-            match self.next_page(&forms).await? {
-                Some(next) if all_forms.len() < 1000 => forms = next,
-                _ => break,
-            }
-        }
         let mut out = Vec::new();
-        for form in all_forms {
-            let Some(form_id) = as_string(&form["id"]) else {
-                continue;
-            };
-            let form_name = form["name"].as_str().map(str::to_string);
-            let mut seen = 0;
-            let mut page = self
+        for form in self.collect_pages(forms, 1000).await? {
+            let first: Page<GraphLead> = self
                 .get(
-                    &format!("{form_id}/leads"),
+                    &format!("{}/leads", form.id),
                     &[("fields", LEAD_FIELDS), ("limit", "100")],
                 )
                 .await?;
-            'pages: loop {
-                for lead in page["data"].as_array().into_iter().flatten() {
-                    if seen >= max_per_form {
-                        break 'pages;
-                    }
-                    seen += 1;
-                    out.push((lead.clone(), form_name.clone()));
-                }
-                match self.next_page(&page).await? {
-                    Some(next) => page = next,
-                    None => break,
-                }
+            for lead in self.collect_pages(first, max_per_form).await? {
+                out.push((lead, form.name.clone()));
             }
         }
         Ok(out)

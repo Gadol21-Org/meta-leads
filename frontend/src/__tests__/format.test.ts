@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { esc, linkify, relTime, urlBase64ToUint8Array } from "../format";
 import { leadView, listView } from "../views";
-import type { Lead } from "../types";
+import { isWorkerMessage, type Lead } from "../types";
 
 describe("format", () => {
   it("escapes html", () => {
@@ -23,6 +23,14 @@ describe("format", () => {
     expect(relTime("2026-11-02T11:30:00Z", now)).toBe("30m ago");
     expect(relTime("2026-11-02T09:00:00Z", now)).toBe("3h ago");
     expect(relTime("garbage", now)).toBe("");
+  });
+
+  it("recognises worker messages", () => {
+    expect(isWorkerMessage({ type: "open", url: "/leads/1" })).toBe(true);
+    expect(isWorkerMessage({ type: "new-lead" })).toBe(true);
+    expect(isWorkerMessage({ type: "open" })).toBe(false);
+    expect(isWorkerMessage(null)).toBe(false);
+    expect(isWorkerMessage("open")).toBe(false);
   });
 
   it("decodes the VAPID public key", () => {
@@ -49,6 +57,12 @@ describe("views", () => {
     expect(html).toContain("Autumn promo");
     expect(html).toContain("IG");
     expect(html).not.toContain("<b>Levi</b>");
+  });
+
+  it("shows disclaimer answers", () => {
+    const html = leadView({ ...lead, disclaimers: [{ key: "terms", checked: true }, { key: "ads", checked: false }] });
+    expect(html).toContain("Checked");
+    expect(html).toContain("Not checked");
   });
 
   it("offers a retry when the Graph lookup failed", () => {

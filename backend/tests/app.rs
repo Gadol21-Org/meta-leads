@@ -205,7 +205,7 @@ async fn signed_webhook_stores_the_full_lead_once() {
     assert_eq!(lead.title, "Dana Levi");
     assert_eq!(lead.form_name.as_deref(), Some("Contact form"));
     assert_eq!(lead.campaign_name.as_deref(), Some("Autumn promo"));
-    assert_eq!(lead.created_time, "2026-11-02T08:00:00Z");
+    assert_eq!(lead.created_time.to_rfc3339(), "2026-11-02T08:00:00+00:00");
     let labels: Vec<_> = lead.fields.iter().map(|f| f.label.as_str()).collect();
     assert_eq!(labels, ["Full name", "Email", "Phone number"]);
     assert_eq!(
@@ -231,7 +231,7 @@ async fn lead_is_kept_with_webhook_data_when_graph_fails() {
     wait_for_lead(&h.state, "222").await;
     let lead = h.state.store.get_lead("222").await.unwrap();
     assert!(lead.fetch_error.unwrap().contains("not found"));
-    assert_eq!(lead.created_time, "2026-11-02T08:00:00Z");
+    assert_eq!(lead.created_time.to_rfc3339(), "2026-11-02T08:00:00+00:00");
 }
 
 #[tokio::test]
@@ -365,7 +365,7 @@ fn subscription(endpoint: String) -> Subscription {
         p256dh: B64.encode(secret.public_key().to_encoded_point(false).as_bytes()),
         auth: B64.encode([7u8; 16]),
         user_agent: String::new(),
-        added_at: String::new(),
+        added_at: None,
     }
 }
 
@@ -468,18 +468,67 @@ async fn push_is_a_no_op_without_vapid_keys() {
 
 #[test]
 fn meta_helpers() {
-    use meta_leads_backend::meta::*;
+    use meta_leads_backend::{
+        meta::*,
+        store::{Disclaimer, Field, LeadSource},
+    };
     assert!(!verify_signature(b"x", Some("sha256=zz"), SECRET));
     assert!(!verify_signature(b"x", None, SECRET));
-    assert!(extract_leadgen_events(&json!({"object": "user", "entry": []})).is_empty());
-    let fields = normalise_fields(
-        &json!([{"name": "first_name", "values": ["A"]}, {"name": "last_name", "values": ["B"]}]),
-    );
-    assert_eq!(lead_title(&fields), "A B");
-    assert_eq!(lead_title(&[]), "New lead");
+
+    let not_a_page: WebhookPayload =
+        serde_json::from_value(json!({"object": "user", "entry": []})).unwrap();
+    assert!(not_a_page.leadgen_events().is_empty());
+
+    // Ids may arrive as numbers; other change fields are ignored.
+    let payload: WebhookPayload = serde_json::from_value(json!({"object": "page", "entry": [{"id": 5, "changes": [
+        {"field": "feed", "value": {"anything": true}},
+        {"field": "leadgen", "value": {"leadgen_id": 777, "form_id": "9", "created_time": 1793606400}},
+    ]}]}))
+    .unwrap();
+    let events = payload.leadgen_events();
+    assert_eq!(events.len(), 1);
     assert_eq!(
-        normalise_time(&json!("2026-11-02T10:00:00+0200")),
-        "2026-11-02T08:00:00Z"
+        (events[0].leadgen_id.as_str(), events[0].page_id.as_str()),
+        ("777", "5")
     );
-    assert_eq!(normalise_time(&json!(1793606400)), "2026-11-02T08:00:00Z");
+    assert_eq!(
+        events[0].created_time.unwrap().to_rfc3339(),
+        "2026-11-02T08:00:00+00:00"
+    );
+
+    let field = |name: &str, value: &str| Field {
+        name: name.into(),
+        label: String::new(),
+        value: value.into(),
+    };
+    assert_eq!(
+        lead_title(&[field("first_name", "A"), field("last_name", "B")]),
+        "A B"
+    );
+    assert_eq!(lead_title(&[field("email", "a@b.co")]), "a@b.co");
+    assert_eq!(lead_title(&[]), FALLBACK_TITLE);
+
+    let graph: GraphLead = serde_json::from_value(json!({
+        "id": "1", "created_time": "2026-11-02T10:00:00+0200",
+        "field_data": [{"name": "what_are_you_interested_in?", "values": ["a", "b"]}],
+        "custom_disclaimer_responses": [{"checkbox_key": "terms", "is_checked": "1"}, {"checkbox_key": "ads", "is_checked": false}],
+    }))
+    .unwrap();
+    let lead = graph.into_lead(LeadSource::Sync, chrono::Utc::now());
+    assert_eq!(lead.created_time.to_rfc3339(), "2026-11-02T08:00:00+00:00");
+    assert_eq!(lead.fields[0].label, "What are you interested in?");
+    assert_eq!(lead.fields[0].value, "a, b");
+    assert_eq!(
+        lead.disclaimers,
+        [
+            Disclaimer {
+                key: "terms".into(),
+                checked: true
+            },
+            Disclaimer {
+                key: "ads".into(),
+                checked: false
+            }
+        ]
+    );
 }

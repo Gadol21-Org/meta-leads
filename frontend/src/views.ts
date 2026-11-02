@@ -35,9 +35,7 @@ export function leadView(lead: Lead): string {
     ["Partner", lead.partner_name],
     ["Lead id", lead.id],
   ];
-  const disclaimers = (lead.custom_disclaimer_responses ?? []).map(
-    (d) => [d.checkbox_key ?? "", d.is_checked === "1" || d.is_checked === true ? "Checked" : "Not checked"] as const,
-  );
+  const disclaimers = (lead.disclaimers ?? []).map((d) => [d.key, d.checked ? "Checked" : "Not checked"] as const);
   return `
     <a href="/" data-link class="back">← All leads</a>
     <section class="card">
