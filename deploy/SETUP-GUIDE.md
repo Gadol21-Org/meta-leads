@@ -48,39 +48,43 @@ Then do the tunnel and Cloudflare Access setup from [README.md](README.md) (publ
 **Actions > Deploy > Run workflow**. Check `https://<your-host>/webhook` in a browser: it must show
 an empty 403 page (not a Cloudflare login page), which means Meta can reach it.
 
-## 4. Webhook subscription
+## 4. Webhook subscription (click path)
 
-1. In the Meta app: **Add product > Webhooks**.
-2. Choose the **Page** object > **Subscribe to this object**. Callback URL
-   `https://<your-host>/webhook`, verify token = your `META_VERIFY_TOKEN`. Meta calls the URL
-   right away; it saves only if the handshake succeeds.
-3. In the Page object's field list, **subscribe to `leadgen`**.
+Meta's dashboard changes its layout from time to time; if a name below differs, look for the same word.
+
+1. Go to [developers.facebook.com/apps](https://developers.facebook.com/apps) and open your app.
+2. In the left menu open **Webhooks**. If you don't see it: **Add product** (or **Use cases**) > **Webhooks** > **Set up**.
+3. In the dropdown at the top of the Webhooks page (it says *User* by default) choose **Page**, then click **Subscribe to this object**.
+4. In the dialog enter:
+   * **Callback URL**: `https://<your-host>/webhook`
+   * **Verify token**: exactly the value of `META_VERIFY_TOKEN`
+   Click **Verify and save**. Meta now calls your server, so the app must already be deployed with that token and `/webhook` must bypass Cloudflare Access. If it fails, open `https://<your-host>/webhook` in a browser: an empty 403 page is correct (the server is reachable); a Cloudflare login page means the bypass rule is missing.
+5. In the table of Page fields, find the **`leadgen`** row and switch its **Subscribe** toggle on. (Subscribing the *object* alone is not enough; the field must be on.)
 
 ## 5. Page access token and `META_PAGE_ID`
 
-1. Open the [Graph API Explorer](https://developers.facebook.com/tools/explorer/), pick your app,
-   **User or Page** token. Add the permissions `pages_show_list`, `pages_read_engagement`,
-   `pages_manage_metadata`, `pages_manage_ads` and `leads_retrieval`, click **Generate Access
-   Token**, and approve the dialog (select your Page). You must be an admin of the Page, and
-   have "Leads access" for it (Page settings > Leads Access, or Business Suite).
-2. Make it long-lived. Using that short-lived token (`SHORT`), your App ID and the app secret:
+You get these from the [Graph API Explorer](https://developers.facebook.com/tools/explorer/); the token is not shown anywhere in the app dashboard.
+
+1. In the Explorer, top right, pick **Meta App** = your app. Under **User or Page** choose **Get User Access Token**.
+2. In **Permissions** add `pages_show_list`, `pages_read_engagement`, `pages_manage_metadata`, `pages_manage_ads` and `leads_retrieval`, click **Generate Access Token** and approve the dialog, selecting your Page. You must be an admin of the Page and have Leads access for it (Page settings > Leads Access, or Business Suite).
+3. Make it long-lived. Using that short-lived token (`SHORT`), your **App ID** and the app secret (both on App settings > Basic), open in a browser:
    ```
-   GET https://graph.facebook.com/v21.0/oauth/access_token
-       ?grant_type=fb_exchange_token&client_id=<APP_ID>&client_secret=<APP_SECRET>&fb_exchange_token=<SHORT>
+   https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=<APP_ID>&client_secret=<APP_SECRET>&fb_exchange_token=<SHORT>
    ```
-   The `access_token` it returns (`LONG_USER`) lasts about 60 days.
-3. Get the page token: `GET https://graph.facebook.com/v21.0/me/accounts?access_token=<LONG_USER>`.
-   Find your Page in the list: its `id` is **`META_PAGE_ID`** and its `access_token` is
-   **`META_PAGE_ACCESS_TOKEN`**. A page token obtained from a long-lived user token does not
-   expire. Confirm in the [Access Token Debugger](https://developers.facebook.com/tools/debug/accesstoken/)
-   (Expires: Never).
-4. Subscribe the app to the Page (without this, no leads are delivered):
+   The `access_token` in the answer (`LONG_USER`) lasts about 60 days.
+4. Get the page token: open `https://graph.facebook.com/v21.0/me/accounts?access_token=<LONG_USER>`
+   (or paste `me/accounts` in the Explorer with `LONG_USER` as its token). Find your Page in the list: its
+   **`id`** is **`META_PAGE_ID`** and its **`access_token`** is **`META_PAGE_ACCESS_TOKEN`**.
+   A page token obtained from a long-lived user token does not expire.
+5. **Check the token works**:
+   * Paste it into the [Access Token Debugger](https://developers.facebook.com/tools/debug/accesstoken/): it should show your app, **Expires: Never**, and `leads_retrieval` in the scopes.
+   * `GET https://graph.facebook.com/v21.0/<PAGE_ID>/leadgen_forms?access_token=<PAGE_TOKEN>` should list your lead forms (an empty list is fine if you have none; an error means a missing permission).
+6. Subscribe the app to the Page (without this no leads are delivered):
    ```
-   POST https://graph.facebook.com/v21.0/<PAGE_ID>/subscribed_apps
-        ?subscribed_fields=leadgen&access_token=<PAGE_TOKEN>
+   POST https://graph.facebook.com/v21.0/<PAGE_ID>/subscribed_apps?subscribed_fields=leadgen&access_token=<PAGE_TOKEN>
    ```
-   It returns `{"success": true}`.
-5. Add both to the `LEADS_ENV` secret:
+   It returns `{"success": true}`. (In the Explorer: set the method to POST and paste `<PAGE_ID>/subscribed_apps` with the field `subscribed_fields` = `leadgen`.) Confirm with `GET <PAGE_ID>/subscribed_apps`: your app should be listed with `leadgen`.
+7. Add both values to the `LEADS_ENV` secret:
    ```
    META_PAGE_ID=<page id>
    META_PAGE_ACCESS_TOKEN=<page token>
