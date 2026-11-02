@@ -1,4 +1,4 @@
-import { esc, fmtDate, linkify, relTime } from "./format";
+import { bidi, esc, fmtDate, linkify, platformBadge, relTime } from "./format";
 import type { AppConfig, Lead, LeadSummary } from "./types";
 
 export function listView(leads: LeadSummary[], config: AppConfig): string {
@@ -13,10 +13,10 @@ export function listView(leads: LeadSummary[], config: AppConfig): string {
       (l) => `
       <li><a href="/leads/${encodeURIComponent(l.id)}" data-link class="lead-row">
         <div>
-          <div class="lead-name">${esc(l.title)}</div>
-          <div class="muted small">${esc([l.form_name, l.campaign_name].filter(Boolean).join(" · ") || l.id)}</div>
+          <div class="lead-name">${bidi(l.title)} ${platformBadge(l.platform)}</div>
+          <div class="muted small">${bidi([l.form_name, l.campaign_name].filter(Boolean).join(" · ") || l.id)}</div>
         </div>
-        <div class="right muted small">${esc(relTime(l.created_time))}</div>
+        <div class="date muted small">${bidi(relTime(l.created_time))}</div>
       </a></li>`,
     )
     .join("");
@@ -30,29 +30,28 @@ export function leadView(lead: Lead): string {
     ["Campaign", lead.campaign_name ?? undefined],
     ["Ad set", lead.adset_name],
     ["Ad", lead.ad_name ?? lead.ad_id],
-    ["Platform", lead.platform?.toUpperCase()],
     ["Organic", lead.is_organic === undefined ? undefined : lead.is_organic ? "Yes" : "No"],
     ["Partner", lead.partner_name],
     ["Lead id", lead.id],
   ];
   const disclaimers = (lead.disclaimers ?? []).map((d) => [d.key, d.checked ? "Checked" : "Not checked"] as const);
   return `
-    <a href="/" data-link class="back">← All leads</a>
+    <a href="/" data-link class="back"><span class="arrow" aria-hidden="true">←</span> All leads</a>
     <section class="card">
-      <h1>${esc(lead.title)}</h1>
+      <h1>${bidi(lead.title)} ${platformBadge(lead.platform)}</h1>
       ${lead.fetch_error ? `<p class="banner">${esc(lead.fetch_error)} <button class="link" id="refresh-btn">Retry</button></p>` : ""}
       <dl class="fields">
         ${lead.fields
-          .map((f) => `<dt>${esc(f.label)}</dt><dd>${linkify(f.name, f.value) || '<span class="muted">—</span>'}</dd>`)
+          .map((f) => `<dt>${bidi(f.label)}</dt><dd>${linkify(f.name, f.value) || '<span class="muted">—</span>'}</dd>`)
           .join("")}
-        ${disclaimers.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}
+        ${disclaimers.map(([k, v]) => `<dt>${bidi(k)}</dt><dd>${bidi(v ?? "")}</dd>`).join("")}
       </dl>
     </section>
     <section class="card">
       <h2>Ad details</h2>
       <dl class="fields">${adRows
         .filter(([, v]) => v)
-        .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`)
+        .map(([k, v]) => `<dt>${bidi(k)}</dt><dd>${bidi(v ?? "")}</dd>`)
         .join("")}</dl>
     </section>`;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { esc, importSummary, linkify, relTime, urlBase64ToUint8Array } from "../format";
+import { esc, importSummary, platformBadge, platformInfo, linkify, relTime, urlBase64ToUint8Array } from "../format";
 import { leadView, listView } from "../views";
 import { isWorkerMessage, type Lead } from "../types";
 
@@ -13,8 +13,8 @@ describe("format", () => {
     expect(linkify("phone_number", "+972 50-123-4567")).toContain('href="tel:+972501234567"');
     expect(linkify("phone_number", "+972 50-123-4567")).toContain("wa.me/972501234567");
     expect(linkify("website", "https://x.example/a")).toContain('target="_blank"');
-    expect(linkify("email", "not an email")).toBe("not an email");
-    expect(linkify("note", "<script>")).toBe("&lt;script&gt;");
+    expect(linkify("email", "not an email")).toBe("<bdi>not an email</bdi>");
+    expect(linkify("note", "<script>")).toBe("<bdi>&lt;script&gt;</bdi>");
   });
 
   it("formats relative times", () => {
@@ -55,7 +55,7 @@ describe("views", () => {
     const html = leadView(lead);
     expect(html).toContain("dana@example.com");
     expect(html).toContain("Autumn promo");
-    expect(html).toContain("IG");
+    expect(html).toContain("badge instagram");
     expect(html).not.toContain("<b>Levi</b>");
   });
 
@@ -84,5 +84,19 @@ describe("importSummary", () => {
     const text = importSummary({ added: 0, refreshed: 0, removed: 0, skipped_forms: 2, unverified: 1 });
     expect(text).toContain("2 forms could not be fully read");
     expect(text).toContain("1 lead could not be verified");
+  });
+});
+
+describe("platform badge", () => {
+  it("names Instagram and Facebook from Meta's short codes", () => {
+    expect(platformInfo("ig")).toEqual({ kind: "instagram", label: "Instagram" });
+    expect(platformInfo("FB")).toEqual({ kind: "facebook", label: "Facebook" });
+    expect(platformInfo("an")).toEqual({ kind: "other", label: "An" });
+  });
+
+  it("shows no badge when Meta did not say", () => {
+    expect(platformInfo(undefined)).toBeUndefined();
+    expect(platformBadge("")).toBe("");
+    expect(platformBadge("ig")).toContain("badge instagram");
   });
 });

@@ -29,6 +29,7 @@
 html, body { margin: 0; }
 /* Scrolling and taps only: no pinch or double-tap zoom, so it feels like an app. */
 html { touch-action: manipulation; }
+body { overscroll-behavior-y: contain; touch-action: pan-x pan-y; }
 body {
   font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
@@ -70,13 +71,15 @@ main { max-width: 720px; margin: 0 auto; padding: 16px; }
 .lead-row { display: flex; justify-content: space-between; gap: 12px; padding: 14px 16px; color: inherit; text-decoration: none; }
 .lead-row:active { background: var(--bg); }
 .lead-name { font-weight: 600; overflow-wrap: anywhere; }
-.right { text-align: right; flex-shrink: 0; }
+.date { text-align: end; flex-shrink: 0; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 .error { color: var(--error); }
 .empty { text-align: center; color: var(--muted); padding: 40px 16px; }
 .banner { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
 .back { display: inline-block; margin-bottom: 12px; text-decoration: none; }
+.arrow { display: inline-block; }
+[dir=rtl] .arrow { transform: scaleX(-1); }
 .fields { display: grid; grid-template-columns: minmax(110px, 35%) 1fr; gap: 10px 14px; margin: 0; }
 .fields dt { color: var(--muted); font-size: 14px; }
 .fields dd { margin: 0; overflow-wrap: anywhere; }
@@ -91,3 +94,30 @@ main { max-width: 720px; margin: 0 auto; padding: 16px; }
   position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translateX(-50%);
   background: #111827; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px; max-width: calc(100% - 32px);
 }
+
+/* Pull to refresh */
+:root { --pull: 0px; --pull-p: 0; }
+main[data-pull] { transform: translateY(var(--pull)); will-change: transform; }
+body.gliding main[data-pull], body.gliding .ptr { transition: transform .3s cubic-bezier(.2, .8, .2, 1); }
+.ptr {
+  position: fixed; top: calc(52px + env(safe-area-inset-top)); inset-inline: 0; margin-inline: auto;
+  width: 40px; height: 40px; z-index: 5; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; pointer-events: none;
+  background: var(--card); border: 1px solid var(--line); box-shadow: 0 2px 8px rgba(0,0,0,.2);
+  transform: translateY(calc(var(--pull) - 48px)); opacity: var(--pull-p);
+}
+.ptr-dot {
+  width: 20px; height: 20px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--brand);
+  rotate: calc(var(--pull-p) * 270deg);
+}
+.ptr.spin .ptr-dot { animation: ptr-spin .8s linear infinite; }
+@keyframes ptr-spin { to { rotate: 360deg; } }
+@media (prefers-reduced-motion: reduce) { .ptr, main[data-pull] { transition: none !important; } }
+
+/* Platform badge */
+.badge {
+  display: inline-block; vertical-align: middle; margin-inline-start: 6px; padding: 1px 8px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; line-height: 1.5; color: #fff; background: #6b7280;
+}
+.badge.instagram { background: #c13584; }
+.badge.facebook { background: #1565c0; }

@@ -22,13 +22,15 @@ export function relTime(iso: string, now: number = Date.now()): string {
 /** Renders a field value as HTML, turning emails, phone numbers and URLs into links. */
 export function linkify(name: string, value: string): string {
   const v = esc(value);
-  if (/email/i.test(name) && /^[^\s@]+@[^\s@]+$/.test(value)) return `<a href="mailto:${v}">${v}</a>`;
+  // Emails, numbers and URLs always read left to right, even inside right-to-left content.
+  const ltr = `<bdi dir="ltr">${v}</bdi>`;
+  if (/email/i.test(name) && /^[^\s@]+@[^\s@]+$/.test(value)) return `<a href="mailto:${v}">${ltr}</a>`;
   if (/phone/i.test(name) && /^[+\d][\d\s().-]{5,}$/.test(value)) {
     const tel = value.replace(/[^\d+]/g, "");
-    return `<a href="tel:${esc(tel)}">${v}</a> · <a href="https://wa.me/${esc(tel.replace("+", ""))}" target="_blank" rel="noopener">WhatsApp</a>`;
+    return `<a href="tel:${esc(tel)}">${ltr}</a> · <a href="https://wa.me/${esc(tel.replace("+", ""))}" target="_blank" rel="noopener">WhatsApp</a>`;
   }
-  if (/^https?:\/\/\S+$/.test(value)) return `<a href="${v}" target="_blank" rel="noopener">${v}</a>`;
-  return v;
+  if (/^https?:\/\/\S+$/.test(value)) return `<a href="${v}" target="_blank" rel="noopener">${ltr}</a>`;
+  return `<bdi>${v}</bdi>`;
 }
 
 export function urlBase64ToUint8Array(base64: string): Uint8Array {
@@ -46,4 +48,25 @@ export function importSummary(r: ImportReport): string {
   if (r.skipped_forms > 0) text += ` ${count(r.skipped_forms, "form")} could not be fully read, so deletions were not checked there.`;
   if (r.unverified > 0) text += ` ${count(r.unverified, "lead")} could not be verified and were kept.`;
   return text;
+}
+
+export type PlatformKind = "instagram" | "facebook" | "other";
+
+/** Meta sends "ig", "fb" and similar short codes; undefined when it did not say. */
+export function platformInfo(platform: string | null | undefined): { kind: PlatformKind; label: string } | undefined {
+  const p = platform?.trim().toLowerCase();
+  if (!p) return undefined;
+  if (p === "ig" || p === "instagram") return { kind: "instagram", label: "Instagram" };
+  if (p === "fb" || p === "facebook") return { kind: "facebook", label: "Facebook" };
+  return { kind: "other", label: p.charAt(0).toUpperCase() + p.slice(1) };
+}
+
+export function platformBadge(platform: string | null | undefined): string {
+  const info = platformInfo(platform);
+  return info ? `<span class="badge ${info.kind}">${esc(info.label)}</span>` : "";
+}
+
+/** Text of unknown direction (names, numbers, ids) isolated so it reads correctly inside right-to-left content. */
+export function bidi(text: string): string {
+  return `<bdi>${esc(text)}</bdi>`;
 }
