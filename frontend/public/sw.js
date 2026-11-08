@@ -2,7 +2,7 @@
 // and caches the app shell so the PWA opens instantly (and offline).
 
 const CACHE = 'meta-leads-v5';
-const SHELL = ['/', '/manifest.webmanifest', '/icons/logo-192.png', '/icons/badge-96.png'];
+const SHELL = ['/', '/manifest.webmanifest', '/icons/logo-192.png', '/icons/badge-192.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -52,7 +52,7 @@ self.addEventListener('push', (event) => {
         tag: data.tag,
         renotify: Boolean(data.tag),
         icon: new URL('/icons/logo-192.png', self.location.origin).href,
-        badge: new URL('/icons/badge-96.png', self.location.origin).href,
+        badge: new URL('/icons/badge-192.png', self.location.origin).href,
         data: { url: data.url || '/' },
       }),
       // Let open windows refresh their list.
